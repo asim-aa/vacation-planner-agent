@@ -13,6 +13,7 @@ Usage:
 import sqlite3
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).parent
@@ -25,6 +26,38 @@ DESTINATIONS_CSV = RAW_DIR / "Tourist_Destinations.csv"
 
 HOTELS_CHUNKSIZE = 200_000
 
+# The raw hotels dataset has no price field. Nightly rates are synthesized
+# deterministically from HotelRating (banded) plus a small bump for facility
+# richness, keyed off HotelCode so the same hotel always gets the same price
+# across reruns. Replace this with a real pricing lookup in v2 without
+# touching the Hotel Agent tool's query interface (it just reads the
+# EstimatedPriceUSD column).
+RATING_PRICE_BANDS = {
+    "OneStar": (30, 60),
+    "TwoStar": (50, 90),
+    "ThreeStar": (80, 150),
+    "FourStar": (140, 260),
+    "FiveStar": (250, 500),
+}
+DEFAULT_PRICE_BAND = (60, 180)  # used for "All" / unrated hotels
+
+
+def add_synthetic_price(df: pd.DataFrame) -> pd.DataFrame:
+    lo = df["HotelRating"].map(lambda r: RATING_PRICE_BANDS.get(r, DEFAULT_PRICE_BAND)[0])
+    hi = df["HotelRating"].map(lambda r: RATING_PRICE_BANDS.get(r, DEFAULT_PRICE_BAND)[1])
+    span = (hi - lo + 1).astype(np.int64)
+
+    hotel_code = pd.to_numeric(df["HotelCode"], errors="coerce").fillna(0).astype(np.int64)
+    offset = hotel_code.abs() % span
+    base_price = lo + offset
+
+    facility_len = df["HotelFacilities"].fillna("").str.len()
+    facility_bonus = (facility_len / 50).clip(upper=40)
+
+    df["EstimatedPriceUSD"] = (base_price + facility_bonus).round(2)
+    df["PriceSource"] = "synthetic_v1"
+    return df
+
 # Key columns from the ticket spec, mapped to the columns that actually
 # exist in the raw CSVs. Where a spec column has no real match, the closest
 # available substitute is used and flagged below.
@@ -34,6 +67,7 @@ EXPECTED_COLUMNS = {
         "hotel_name": "HotelName",  # spec used snake_case; real column is HotelName
         "HotelRating": "HotelRating",
         "HotelFacilities": "HotelFacilities",
+        "price": "EstimatedPriceUSD",  # synthesized; raw dataset has no price field
     },
     "flights": {
         "airline": "Airline",
@@ -58,6 +92,7 @@ def load_hotels(conn: sqlite3.Connection) -> None:
         HOTELS_CSV, chunksize=HOTELS_CHUNKSIZE, skipinitialspace=True, encoding="latin1"
     ):
         chunk.columns = [c.strip() for c in chunk.columns]
+        chunk = add_synthetic_price(chunk)
         chunk.to_sql("hotels", conn, if_exists="replace" if first else "append", index=False)
         first = False
 
