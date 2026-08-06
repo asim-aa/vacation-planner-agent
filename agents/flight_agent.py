@@ -40,16 +40,23 @@ def flight_agent_node(state: TripState) -> dict:
             "flight_cost_estimate": 0.0,
         }
 
+    # `results` is already sorted cheapest-first by the tool. Pin the
+    # recommendation to that exact flight instead of letting the LLM pick
+    # freely -- otherwise its narrative pick and the cost estimate (which
+    # uses results[0]) can disagree.
+    top_flight = results[0]
+
     llm = get_llm()
     prompt = (
-        "You are a travel planning assistant. Given this list of flight "
-        f"options (JSON) and a baseline average price of ${baseline}, pick "
-        "the single best value option and explain why in 1-2 sentences. "
-        f"Only use the data given, do not invent details.\n\n{results}"
+        "You are a travel planning assistant. This flight (JSON) is the "
+        f"cheapest option available, against a baseline average price of "
+        f"${baseline}. Write 1-2 sentences recommending it. Only use the "
+        "data given, do not invent details, and do not suggest a different "
+        f"flight.\n\n{top_flight}"
     )
     recommendation = llm.invoke(prompt).content
 
-    cheapest_one_way = min(r["Price_USD"] for r in results)
+    cheapest_one_way = top_flight["Price_USD"]
 
     return {
         "flight_results": results,
