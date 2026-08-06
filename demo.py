@@ -28,9 +28,9 @@ state: TripState = {
 
 
 def main() -> None:
-    print(f"Trip: {state['destination_city']}, {state['destination_country']}")
-    print(f"Route: {state['origin_airport']} -> {state['destination_airport']} ({state['seat_class']})")
-    print(f"Month: {state['travel_month']} | Max hotel/night: ${state['max_nightly_hotel_price']}")
+    print(f"Trip: {state.get('destination_city')}, {state.get('destination_country')}")
+    print(f"Route: {state.get('origin_airport')} -> {state.get('destination_airport')} ({state.get('seat_class')})")
+    print(f"Month: {state.get('travel_month')} | Max hotel/night: ${state.get('max_nightly_hotel_price')}")
     print("=" * 70)
 
     print("\nHOTEL AGENT")
