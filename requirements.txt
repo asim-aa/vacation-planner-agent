@@ -1,0 +1,5 @@
+langgraph
+langchain-core
+pandas
+kaggle
+python-dotenv
