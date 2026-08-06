@@ -1,5 +1,7 @@
 langgraph
 langchain-core
+langchain-openai
+openai
 pandas
 kaggle
 python-dotenv
