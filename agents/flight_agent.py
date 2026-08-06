@@ -5,7 +5,9 @@ from agents.state import TripState
 from tools.flight_tool import get_baseline_price, search_flights
 
 
-def flight_agent_node(state: TripState) -> dict:
+def flight_agent_node(state: TripState, llm=None) -> dict:
+    """`llm` is injectable so tests can pass a fake instead of hitting the
+    real endpoint; defaults to the real client when not provided."""
     seat_class = state.get("seat_class", "Economy")
 
     if not state.get("destination_airport"):
@@ -46,7 +48,7 @@ def flight_agent_node(state: TripState) -> dict:
     # uses results[0]) can disagree.
     top_flight = results[0]
 
-    llm = get_llm()
+    llm = llm or get_llm()
     prompt = (
         "You are a travel planning assistant. This flight (JSON) is the "
         f"cheapest option available, against a baseline average price of "

@@ -5,3 +5,4 @@ openai
 pandas
 kaggle
 python-dotenv
+pytest

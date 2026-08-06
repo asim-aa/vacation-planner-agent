@@ -5,7 +5,9 @@ from agents.state import TripState
 from tools.spots_weather_tool import search_destinations
 
 
-def spots_weather_agent_node(state: TripState) -> dict:
+def spots_weather_agent_node(state: TripState, llm=None) -> dict:
+    """`llm` is injectable so tests can pass a fake instead of hitting the
+    real endpoint; defaults to the real client when not provided."""
     results = search_destinations(
         country=state["destination_country"],
         travel_month=state.get("travel_month"),
@@ -29,7 +31,7 @@ def spots_weather_agent_node(state: TripState) -> dict:
         key=lambda r: (not r.get("season_match", False), -r["Avg Rating"]),
     )
 
-    llm = get_llm()
+    llm = llm or get_llm()
     prompt = (
         "You are a travel planning assistant. Given this list of activity "
         "spots (JSON), already ranked with the best season-matched, "

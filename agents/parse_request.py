@@ -64,14 +64,16 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def parse_request_node(state: TripState) -> dict:
+def parse_request_node(state: TripState, llm=None) -> dict:
+    """`llm` is injectable so tests can pass a fake instead of hitting the
+    real endpoint; defaults to the real client when not provided."""
     prompt = PROMPT_TEMPLATE.format(
         user_request=state["user_request"],
         airports=list(SUPPORTED_AIRPORTS.keys()),
         airport_cities=", ".join(SUPPORTED_AIRPORTS.values()),
         countries=", ".join(SUPPORTED_COUNTRIES),
     )
-    llm = get_llm()
+    llm = llm or get_llm()
     raw = llm.invoke(prompt).content
     parsed = _extract_json(raw)
 

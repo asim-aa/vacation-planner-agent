@@ -5,7 +5,9 @@ from agents.state import TripState
 from tools.hotel_tool import search_hotels
 
 
-def hotel_agent_node(state: TripState) -> dict:
+def hotel_agent_node(state: TripState, llm=None) -> dict:
+    """`llm` is injectable so tests can pass a fake instead of hitting the
+    real endpoint; defaults to the real client when not provided."""
     results = search_hotels(
         city=state["destination_city"],
         max_price=state.get("max_nightly_hotel_price"),
@@ -28,7 +30,7 @@ def hotel_agent_node(state: TripState) -> dict:
     # "check into X" line (which uses results[0]) can name different hotels.
     top_hotel = results[0]
 
-    llm = get_llm()
+    llm = llm or get_llm()
     prompt = (
         "You are a travel planning assistant. This hotel (JSON) is the "
         "cheapest option available for this trip. Write 1-2 sentences "

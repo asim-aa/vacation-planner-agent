@@ -96,6 +96,11 @@ def load_hotels(conn: sqlite3.Connection) -> None:
         chunk.to_sql("hotels", conn, if_exists="replace" if first else "append", index=False)
         first = False
 
+    # hotels has ~1M rows; every search_hotels() call filters on
+    # LOWER(cityName), which needs an expression index to avoid a full
+    # table scan (a plain index on cityName wouldn't be used here).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hotels_city_lower ON hotels (LOWER(cityName))")
+
 
 def load_flights(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS flights")
