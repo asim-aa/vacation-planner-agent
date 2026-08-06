@@ -9,13 +9,14 @@ Usage:
 from agents.flight_agent import flight_agent_node
 from agents.hotel_agent import hotel_agent_node
 from agents.spots_weather_agent import spots_weather_agent_node
+from agents.state import TripState
 
 # Edit these to try a different trip.
 # origin_airport / destination_airport must be one of:
 #   JFK, ORD, SEA, LAX, SFO, ATL, DFW, DEN  (US domestic only, see Phase 2 notes)
 # destination_country must be a real country name present in the destinations
 # dataset (22 countries total -- try France, Japan, Italy, Australia, etc.)
-state = {
+state: TripState = {
     "destination_city": "Paris",
     "origin_airport": "JFK",
     "destination_airport": "ATL",
