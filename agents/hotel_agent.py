@@ -19,6 +19,7 @@ def hotel_agent_node(state: TripState) -> dict:
                 f"No hotels found in {state['destination_city']} "
                 f"within the given budget."
             ),
+            "lodging_cost_estimate": 0.0,
         }
 
     llm = get_llm()
@@ -30,4 +31,11 @@ def hotel_agent_node(state: TripState) -> dict:
     )
     recommendation = llm.invoke(prompt).content
 
-    return {"hotel_results": results, "hotel_recommendation": recommendation}
+    duration_days = state.get("duration_days", 5)
+    cheapest_nightly = min(r["EstimatedPriceUSD"] for r in results)
+
+    return {
+        "hotel_results": results,
+        "hotel_recommendation": recommendation,
+        "lodging_cost_estimate": round(cheapest_nightly * duration_days, 2),
+    }

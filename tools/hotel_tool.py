@@ -22,9 +22,14 @@ def search_hotels(
     min_rating: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    """Return hotels in `city` (exact match, case-insensitive), optionally
-    capped at `max_price` per night and/or filtered to an exact `min_rating`
-    tier (e.g. "ThreeStar"), cheapest first.
+    """Return hotels in `city`, optionally capped at `max_price` per night
+    and/or filtered to an exact `min_rating` tier (e.g. "ThreeStar"),
+    cheapest first.
+
+    Tries an exact case-insensitive match on `cityName` first. US entries in
+    this dataset are stored as "City,   State" (e.g. "Atlanta,   Georgia"),
+    so a plain city name falls back to a prefix match on "city,%" before
+    giving up.
 
     Returns an empty list if no hotels match -- callers must handle that
     without crashing, per the orchestrator's zero-result requirement.
@@ -32,25 +37,33 @@ def search_hotels(
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
-        query = """
+        base_query = """
             SELECT HotelName, cityName, HotelRating, EstimatedPriceUSD, HotelFacilities
             FROM hotels
-            WHERE LOWER(cityName) = LOWER(?)
+            WHERE {city_clause}
         """
-        params: list = [city.strip()]
+        filters = ""
+        params: list = []
 
         if max_price is not None:
-            query += " AND EstimatedPriceUSD <= ?"
+            filters += " AND EstimatedPriceUSD <= ?"
             params.append(max_price)
 
         if min_rating is not None:
-            query += " AND HotelRating = ?"
+            filters += " AND HotelRating = ?"
             params.append(min_rating)
 
-        query += " ORDER BY EstimatedPriceUSD ASC LIMIT ?"
-        params.append(limit)
+        filters += " ORDER BY EstimatedPriceUSD ASC LIMIT ?"
 
-        rows = conn.execute(query, params).fetchall()
+        city_clean = city.strip()
+
+        exact_query = base_query.format(city_clause="LOWER(cityName) = LOWER(?)") + filters
+        rows = conn.execute(exact_query, [city_clean, *params, limit]).fetchall()
+
+        if not rows:
+            prefix_query = base_query.format(city_clause="LOWER(cityName) LIKE LOWER(?)") + filters
+            rows = conn.execute(prefix_query, [f"{city_clean},%", *params, limit]).fetchall()
+
         return [dict(row) for row in rows]
     finally:
         conn.close()
