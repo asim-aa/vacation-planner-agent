@@ -207,7 +207,7 @@ def render_lodging(state: dict) -> None:
                 {
                     "Hotel": h["HotelName"],
                     "Price/night ($)": h["EstimatedPriceUSD"],
-                    "Rating": h.get("GuestRating") or "—",
+                    "Rating": h.get("GuestRating"),
                 }
                 for h in hotels[1:]
             ])
@@ -410,11 +410,28 @@ def _describe_activities_pick(state: dict) -> str:
     return f"top picks are now: {names}."
 
 
-# category -> (refine function, description of what changed)
+def _hotel_signature(state: dict):
+    hotels = state.get("hotel_results", [])
+    return hotels[0]["HotelName"] if hotels else None
+
+
+def _flight_signature(state: dict):
+    flights = state.get("flight_results", [])
+    if not flights:
+        return None
+    f = flights[0]
+    return (f["Airline"], f["Price_USD"], f["Stops"])
+
+
+def _activities_signature(state: dict):
+    return tuple(s["Destination Name"] for s in state.get("spot_results", [])[:3])
+
+
+# category -> (refine function, description of what changed, signature for no-op detection)
 REFINE_HANDLERS = {
-    "hotel": (refine_hotel_for_quality, _describe_hotel_pick),
-    "flight": (refine_flight_for_comfort, _describe_flight_pick),
-    "activities": (refine_activities_for_notability, _describe_activities_pick),
+    "hotel": (refine_hotel_for_quality, _describe_hotel_pick, _hotel_signature),
+    "flight": (refine_flight_for_comfort, _describe_flight_pick, _flight_signature),
+    "activities": (refine_activities_for_notability, _describe_activities_pick, _activities_signature),
 }
 
 UNCLEAR_REPLY = (
@@ -423,12 +440,24 @@ UNCLEAR_REPLY = (
 )
 
 
+def _no_change_reply(category: str) -> str:
+    return (
+        f"That's already the best {category} option among what I found for this trip's "
+        f"current origin, destination, and dates -- I don't have a better one to switch to. "
+        "Chat can only re-prioritize among results already fetched, not search a different "
+        "city, date, or budget -- edit the trip request box above and click \"Plan my trip\" "
+        "again for that."
+    )
+
+
 def render_chat() -> None:
     st.divider()
     st.markdown("#### 💬 Ask for a refinement")
     st.caption(
         'Try: "spend the rest on a nicer hotel", "get me a more direct flight", '
-        'or "show me more well-known activities".'
+        'or "show me more well-known activities". This re-prioritizes among results '
+        "already found for your current origin/destination/dates -- it can't change "
+        "those or search a new city; edit the trip request box above for that."
     )
 
     for msg in st.session_state.get("chat_history", []):
@@ -441,10 +470,15 @@ def render_chat() -> None:
         category = classify_followup(followup)
         handler = REFINE_HANDLERS.get(category)
         if handler:
-            refine_fn, describe_fn = handler
+            refine_fn, describe_fn, signature_fn = handler
+            before = signature_fn(st.session_state["trip_state"])
             with st.spinner("Applying..."):
                 st.session_state["trip_state"] = refine_fn(st.session_state["trip_state"])
-            reply = f"Done — {describe_fn(st.session_state['trip_state'])}"
+            after = signature_fn(st.session_state["trip_state"])
+            if after == before:
+                reply = _no_change_reply(category)
+            else:
+                reply = f"Done — {describe_fn(st.session_state['trip_state'])}"
         else:
             reply = UNCLEAR_REPLY
 
