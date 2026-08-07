@@ -1,7 +1,9 @@
 """
 Spots & Weather Agent tool: queries the local destinations table
 (popular-tourist-destinations-and-their-features, loaded into SQLite by
-data_check.py) for activity-type spots and checks travel-month climate fit.
+data_check.py) for activity-type spots, and checks travel-month climate
+fit via real historical weather data (tools/weather_tool.py) -- v2 no
+longer uses the dataset's mock "Best Season" column for this.
 
 Note: "Destination Name" values are generic/templated (e.g. "Serene Temple"
 recurs across multiple countries) rather than real place names -- Country
@@ -14,14 +16,9 @@ category, per row.
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data" / "vacation.db"
+from tools.weather_tool import get_climate_suitability
 
-MONTH_TO_SEASON = {
-    "december": "Winter", "january": "Winter", "february": "Winter",
-    "march": "Spring", "april": "Spring", "may": "Spring",
-    "june": "Summer", "july": "Summer", "august": "Summer",
-    "september": "Autumn", "october": "Autumn", "november": "Autumn",
-}
+DB_PATH = Path(__file__).parent.parent / "data" / "vacation.db"
 
 
 def search_destinations(
@@ -33,9 +30,12 @@ def search_destinations(
     """Return destination/activity rows for `country` (exact match,
     case-insensitive), optionally filtered by activity `category` (Type).
 
-    If `travel_month` is given, each result includes a `season_match` bool
-    comparing the destination's Best Season against the month's season
-    (Northern Hemisphere mapping). Returns an empty list if no rows match.
+    If `travel_month` is given, every result gets the same `season_match`
+    bool and `climate` details, from one real historical-climate lookup
+    for the country's reference city (see weather_tool.py) -- the
+    destinations dataset has no per-row real location to check
+    individually. Returns an empty list if no rows match the country/
+    category filter.
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -59,12 +59,11 @@ def search_destinations(
     finally:
         conn.close()
 
-    if travel_month is not None:
-        target_season = MONTH_TO_SEASON.get(travel_month.strip().lower())
+    if travel_month is not None and rows:
+        climate = get_climate_suitability(country, travel_month)
         for row in rows:
-            row["season_match"] = (
-                target_season is not None and row["Best Season"] == target_season
-            )
+            row["season_match"] = climate["suitable"] if climate else None
+            row["climate"] = climate
 
     return rows
 

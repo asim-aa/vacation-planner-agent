@@ -1,15 +1,100 @@
-from agents.flight_agent import flight_agent_node
+"""
+flight_agent_node calls the live, quota-limited Air Scraper API. These
+tests monkeypatch the resolve/search functions it imports (the same
+"inject a fake instead of the real dependency" pattern used for the LLM)
+so the agent's control flow -- resolution, date computation, cost math,
+zero-result handling -- is verified without any network calls or quota
+cost.
+"""
+
+import agents.flight_agent as flight_agent_module
+from agents.flight_agent import _next_occurrence_of_month, flight_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
+FAKE_ORIGIN_IDS = {"skyId": "JFK", "entityId": "1"}
+FAKE_DEST_IDS = {"skyId": "ATL", "entityId": "2", "displayCode": "ATL"}
 
-def test_no_destination_airport_short_circuits_without_calling_llm():
-    llm = RecordingFakeLLM()
+FAKE_RESULTS = [
+    {"Airline": "Delta", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
+     "Seat_Class": "Economy", "Price_USD": 100.0, "Departure_Time": "t1",
+     "Arrival_Time": "t2", "Stops": 0},
+    {"Airline": "United", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
+     "Seat_Class": "Economy", "Price_USD": 150.0, "Departure_Time": "t3",
+     "Arrival_Time": "t4", "Stops": 1},
+]
+
+
+def test_next_occurrence_of_month_returns_future_date():
+    result = _next_occurrence_of_month("April")
+    assert result.endswith("-04-15")
+
+
+def test_known_destination_airport_skips_city_resolution(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    called_city_resolve = []
+    monkeypatch.setattr(
+        flight_agent_module, "resolve_city_to_airport",
+        lambda city: called_city_resolve.append(city) or FAKE_DEST_IDS,
+    )
+    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+
+    state = {
+        "destination_city": "Atlanta",
+        "origin_airport": "JFK",
+        "destination_airport": "ATL",
+        "travel_month": "September",
+    }
+    result = flight_agent_node(state, llm=FakeLLM())
+
+    assert called_city_resolve == []  # never called -- known airport skipped it
+    assert result["flight_results"] == FAKE_RESULTS
+
+
+def test_unknown_destination_falls_back_to_city_resolution(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    monkeypatch.setattr(flight_agent_module, "resolve_city_to_airport", lambda city: FAKE_DEST_IDS)
+    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+
     state = {
         "destination_city": "Paris",
         "origin_airport": "JFK",
         "destination_airport": None,
+        "travel_month": "September",
     }
+    result = flight_agent_node(state, llm=FakeLLM())
 
+    assert result["flight_results"] == FAKE_RESULTS
+
+
+def test_unresolvable_destination_returns_empty_without_crashing(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    monkeypatch.setattr(flight_agent_module, "resolve_city_to_airport", lambda city: None)
+    llm = RecordingFakeLLM()
+
+    state = {
+        "destination_city": "Nowhereland",
+        "origin_airport": "JFK",
+        "destination_airport": None,
+        "travel_month": "September",
+    }
+    result = flight_agent_node(state, llm=llm)
+
+    assert result["flight_results"] == []
+    assert result["flight_cost_estimate"] == 0.0
+    assert llm.prompts == []  # never called
+
+
+def test_zero_search_results_short_circuits_without_calling_llm(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: [])
+    llm = RecordingFakeLLM()
+
+    state = {
+        "destination_city": "Atlanta",
+        "origin_airport": "JFK",
+        "destination_airport": "ATL",
+        "travel_month": "September",
+    }
     result = flight_agent_node(state, llm=llm)
 
     assert result["flight_results"] == []
@@ -17,51 +102,34 @@ def test_no_destination_airport_short_circuits_without_calling_llm():
     assert llm.prompts == []
 
 
-def test_unknown_route_short_circuits_without_calling_llm():
-    llm = RecordingFakeLLM()
-    state = {
-        "destination_city": "Nowhere",
-        "origin_airport": "JFK",
-        "destination_airport": "ATL",
-        "seat_class": "First",  # route+class combo that may not exist
-    }
+def test_cost_estimate_is_cheapest_result_doubled(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
 
-    result = flight_agent_node(state, llm=llm)
-
-    if not result["flight_results"]:
-        assert result["flight_cost_estimate"] == 0.0
-        assert llm.prompts == []
-
-
-def test_flight_cost_is_cheapest_one_way_doubled():
-    llm = FakeLLM()
     state = {
         "destination_city": "Atlanta",
         "origin_airport": "JFK",
         "destination_airport": "ATL",
-        "seat_class": "Economy",
+        "travel_month": "September",
     }
+    result = flight_agent_node(state, llm=FakeLLM())
 
-    result = flight_agent_node(state, llm=llm)
-
-    assert result["flight_results"]
-    cheapest = min(r["Price_USD"] for r in result["flight_results"])
-    assert result["flight_cost_estimate"] == round(cheapest * 2, 2)
+    assert result["flight_cost_estimate"] == 200.0  # cheapest (100.0) * 2
 
 
-def test_recommendation_prompt_only_describes_the_cheapest_flight():
+def test_recommendation_prompt_only_describes_the_cheapest_flight(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
+    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
     llm = RecordingFakeLLM()
+
     state = {
         "destination_city": "Atlanta",
         "origin_airport": "JFK",
         "destination_airport": "ATL",
-        "seat_class": "Economy",
+        "travel_month": "September",
     }
+    flight_agent_node(state, llm=llm)
 
-    result = flight_agent_node(state, llm=llm)
-
-    cheapest_airline = result["flight_results"][0]["Airline"]
-    cheapest_price = str(result["flight_results"][0]["Price_USD"])
     assert len(llm.prompts) == 1
-    assert cheapest_airline in llm.prompts[0]
-    assert cheapest_price in llm.prompts[0]
+    assert "Delta" in llm.prompts[0]
+    assert "United" not in llm.prompts[0]

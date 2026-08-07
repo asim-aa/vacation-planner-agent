@@ -7,3 +7,4 @@ kaggle
 python-dotenv
 pytest
 streamlit
+requests
