@@ -3,6 +3,11 @@ Orchestrator entry node: turns the user's natural-language request into the
 structured fields the sub-agent nodes need. This is the only place raw user
 text touches the LLM -- everything downstream operates on small, structured
 tool outputs.
+
+The LLM only extracts real-world names (cities, country, month) -- it does
+NOT guess IATA airport codes. tools/flight_tool.resolve_city_to_iata()
+handles that offline, which is what lets both origin and destination be
+any real city rather than a fixed list.
 """
 
 import json
@@ -10,17 +15,6 @@ import re
 
 from agents.llm_client import get_llm
 from agents.state import TripState
-
-SUPPORTED_AIRPORTS = {
-    "JFK": "New York",
-    "ORD": "Chicago",
-    "SEA": "Seattle",
-    "LAX": "Los Angeles",
-    "SFO": "San Francisco",
-    "ATL": "Atlanta",
-    "DFW": "Dallas",
-    "DEN": "Denver",
-}
 
 # Exact country-name strings the destinations dataset uses -- e.g. "USA", not
 # "United States". If the LLM writes anything else, the Spots/Weather Agent
@@ -41,14 +35,14 @@ exact keys:
 - "destination_country": string, the country that city is in. If the country
   matches one of {countries}, use that EXACT spelling (e.g. write "USA", not
   "United States" or "the US").
+- "origin_city": string, the real-world city they say they're flying from.
+  Default to "New York" if unstated.
+- "origin_country": string or null, the country that origin city is in, if
+  stated or obvious (e.g. "USA" for New York); otherwise null.
 - "travel_month": string, full month name (e.g. "April"). If not stated, make
   a reasonable guess based on context, defaulting to the current season.
 - "budget_total": number, total trip budget in USD. If not stated, use 2000.
 - "duration_days": integer, trip length in days. If not stated, use 5.
-- "origin_airport": one of {airports} -- pick the one matching where the user
-  says they're flying from, defaulting to "JFK" if unstated or not one of these.
-- "destination_airport": one of {airports}, ONLY if destination_city IS one of
-  the cities listed for those airports ({airport_cities}); otherwise null.
 - "seat_class": one of "Economy", "Premium Economy", "Business", "First" --
   default "Economy" if unstated.
 
@@ -69,29 +63,19 @@ def parse_request_node(state: TripState, llm=None) -> dict:
     real endpoint; defaults to the real client when not provided."""
     prompt = PROMPT_TEMPLATE.format(
         user_request=state["user_request"],
-        airports=list(SUPPORTED_AIRPORTS.keys()),
-        airport_cities=", ".join(SUPPORTED_AIRPORTS.values()),
         countries=", ".join(SUPPORTED_COUNTRIES),
     )
     llm = llm or get_llm()
     raw = llm.invoke(prompt).content
     parsed = _extract_json(raw)
 
-    destination_airport = parsed.get("destination_airport")
-    if destination_airport not in SUPPORTED_AIRPORTS:
-        destination_airport = None
-
-    origin_airport = parsed.get("origin_airport")
-    if origin_airport not in SUPPORTED_AIRPORTS:
-        origin_airport = "JFK"
-
     return {
         "destination_city": parsed["destination_city"],
         "destination_country": parsed["destination_country"],
+        "origin_city": parsed.get("origin_city") or "New York",
+        "origin_country": parsed.get("origin_country"),
         "travel_month": parsed.get("travel_month", "April"),
         "budget_total": float(parsed.get("budget_total", 2000)),
         "duration_days": int(parsed.get("duration_days", 5)),
-        "origin_airport": origin_airport,
-        "destination_airport": destination_airport,
         "seat_class": parsed.get("seat_class", "Economy"),
     }

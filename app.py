@@ -18,14 +18,19 @@ st.caption(
     "will do the rest."
 )
 
-with st.expander("Coverage notes (mock data, not live APIs)"):
+with st.expander("Coverage notes"):
     st.markdown(
-        "- **Flights** only cover 8 US airports: JFK, ORD, SEA, LAX, SFO, "
-        "ATL, DFW, DEN. Non-US or unlisted destinations will show no "
-        "flight data.\n"
-        "- **Hotel prices** are synthetic (derived from star rating), "
-        "not real rates.\n"
-        "- **Destinations/activities** dataset covers 22 countries."
+        "- **Flights** are live (Google Flights via `fast-flights`) -- any "
+        "real origin/destination city works, no fixed airport list.\n"
+        "- **Hotels** are live (Google Hotels via `fast-hotels`) -- any "
+        "real city works, with real nightly prices.\n"
+        "- **Weather/season fit** is live real historical climate data "
+        "(Open-Meteo), checked against one representative city per "
+        "country.\n"
+        "- **The activity spots themselves** (e.g. \"Lush Ruins\") are "
+        "still mock data from the original Kaggle dataset -- generic "
+        "template names, not real places -- covering 22 countries. Only "
+        "the weather-suitability check on top of them is real."
     )
 
 default_example = (

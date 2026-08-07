@@ -11,20 +11,19 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
     real endpoint; defaults to the real client when not provided.
 
     Airport resolution (tools.flight_tool.resolve_city_to_iata) is fully
-    offline -- no network call, no quota -- so any real destination city
-    works, not just a fixed airport list.
+    offline -- no network call, no quota -- so any real origin/destination
+    city works, not a fixed airport list on either side.
     """
     seat_class = state.get("seat_class", "Economy")
 
-    destination_code = state.get("destination_airport") or resolve_city_to_iata(
-        state["destination_city"], state.get("destination_country")
-    )
-    if not destination_code:
+    origin_code = resolve_city_to_iata(state["origin_city"], state.get("origin_country"))
+    destination_code = resolve_city_to_iata(state["destination_city"], state.get("destination_country"))
+
+    if not origin_code or not destination_code:
+        unresolved = state["origin_city"] if not origin_code else state["destination_city"]
         return {
             "flight_results": [],
-            "flight_recommendation": (
-                f"Couldn't find an airport for {state['destination_city']}."
-            ),
+            "flight_recommendation": f"Couldn't find an airport for {unresolved}.",
             "flight_cost_estimate": 0.0,
         }
 
@@ -34,7 +33,7 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
         departure_date = next_occurrence_of_month("April")
 
     results = search_flights(
-        origin=state["origin_airport"],
+        origin=origin_code,
         destination=destination_code,
         departure_date=departure_date,
         seat_class=seat_class,
@@ -45,7 +44,7 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
         return {
             "flight_results": [],
             "flight_recommendation": (
-                f"No {seat_class} flights found from {state['origin_airport']} "
+                f"No {seat_class} flights found from {origin_code} "
                 f"to {destination_code} on {departure_date}."
             ),
             "flight_cost_estimate": 0.0,

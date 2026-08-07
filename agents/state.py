@@ -7,9 +7,9 @@ class TripState(TypedDict, total=False):
     # Raw natural-language request, and the fields parsed out of it
     user_request: str
     destination_city: str  # for the Hotel Agent (e.g. "Paris")
-    origin_airport: str  # IATA code, e.g. "JFK"
-    destination_airport: str | None  # IATA code -- only set if it's one of the 8 covered airports
     destination_country: str  # for the Spots & Weather Agent (e.g. "France")
+    origin_city: str  # for the Flight Agent (e.g. "New York") -- any real city
+    origin_country: str | None  # optional, disambiguates same-named cities
     travel_month: str  # e.g. "April"
     budget_total: float
     duration_days: int
