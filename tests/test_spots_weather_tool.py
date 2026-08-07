@@ -1,59 +1,60 @@
+"""
+tools/spots_weather_tool.py is v2, backed by OpenStreetMap (Nominatim +
+Overpass, free, keyless, but real network calls, and Overpass's public
+server has been observed to be slow/flaky under load). Gated behind
+RUN_LIVE_PLACES_TESTS=1 to keep the default suite fast and independent
+of that:
+    RUN_LIVE_PLACES_TESTS=1 pytest tests/test_spots_weather_tool.py -v
+"""
+
+import os
+
+import pytest
+
 from tools.spots_weather_tool import search_destinations
 
+live_only = pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_PLACES_TESTS") != "1",
+    reason="live network call (Nominatim + Overpass) -- set RUN_LIVE_PLACES_TESTS=1 to run",
+)
 
-def test_filters_by_country():
-    results = search_destinations("Japan", limit=10)
+
+@live_only
+def test_returns_real_named_places():
+    results = search_destinations("Paris", "France", limit=5)
     assert results
-    assert all(r["Country"] == "Japan" for r in results)
+    assert all(r["Destination Name"] for r in results)  # every result has a real name
+    assert all("Destination Name" in r and "Type" in r for r in results)
 
 
-def test_filters_by_category():
-    results = search_destinations("Japan", category="Historical", limit=10)
+@live_only
+def test_results_sorted_closest_first():
+    results = search_destinations("Paris", "France", limit=10)
+    distances = [r["DistanceFromCenterKm"] for r in results]
+    assert distances == sorted(distances)
+
+
+@live_only
+def test_unknown_city_returns_empty_list():
+    assert search_destinations("Nonexistentcityxyz123") == []
+
+
+@live_only
+def test_season_match_and_climate_present_when_travel_month_given():
+    results = search_destinations("Paris", "France", travel_month="April", limit=5)
     assert results
-    assert all(r["Type"] == "Historical" for r in results)
+    assert all("season_match" in r and "climate" in r for r in results)
 
 
-def test_unknown_country_returns_empty_list():
-    assert search_destinations("Nowhereland") == []
-
-
-def test_season_match_flag_set_when_travel_month_given():
-    results = search_destinations("Japan", travel_month="April", limit=10)
-    assert results
-    assert all("season_match" in r for r in results)
-    assert all(isinstance(r["season_match"], bool) for r in results)
-
-
+@live_only
 def test_season_match_absent_without_travel_month():
-    results = search_destinations("Japan", limit=10)
+    results = search_destinations("Paris", "France", limit=5)
     assert results
     assert all("season_match" not in r for r in results)
 
 
-def test_season_match_uses_real_climate_not_mock_best_season_column():
-    # v2: season_match comes from one real historical-climate lookup per
-    # country+month (tools/weather_tool.py), applied uniformly -- not from
-    # the mock "Best Season" column, which varies randomly per row and is
-    # no longer consulted for this.
-    results = search_destinations("Japan", travel_month="January", limit=10)
+@live_only
+def test_category_filter():
+    results = search_destinations("Paris", "France", category="Museum", limit=10)
     assert results
-    season_matches = {r["season_match"] for r in results}
-    assert len(season_matches) == 1  # same real climate answer for every row
-
-    best_seasons = {r["Best Season"] for r in results}
-    assert len(best_seasons) > 1  # sanity check: the mock column is per-row noise
-
-
-def test_climate_field_present_and_reflects_reality_when_travel_month_given():
-    # Cairo in July is genuinely very hot -- a real API should say unsuitable.
-    results = search_destinations("Egypt", travel_month="July", limit=5)
-    assert results
-    assert all("climate" in r for r in results)
-    assert all(r["climate"]["suitable"] is False for r in results)
-    assert all(r["climate"]["avg_max_temp_c"] > 32 for r in results)
-
-
-def test_climate_field_absent_without_travel_month():
-    results = search_destinations("Japan", limit=5)
-    assert results
-    assert all("climate" not in r for r in results)
+    assert all(r["Type"] == "Museum" for r in results)

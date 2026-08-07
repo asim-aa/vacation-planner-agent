@@ -9,8 +9,16 @@ local IATA database) -- unlike the RapidAPI version, there is no live
 "resolve city to airport" call and nothing to cache or ration.
 """
 
+import time
+
 import airportsdata
 from fast_flights import FlightQuery, Passengers, create_query, get_flights
+
+# Seen in practice (same class of issue as tools/hotel_tool.py): a live
+# scrape can transiently return zero results even though the exact same
+# query succeeds on an immediate retry.
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 2
 
 _AIRPORTS = airportsdata.load("IATA")
 
@@ -83,20 +91,29 @@ def search_flights(
     (IATA codes) departing on `departure_date` (YYYY-MM-DD), optionally
     filtered by seat class and/or capped at `max_price`, cheapest first.
 
-    Returns an empty list on no results or any scrape failure -- callers
-    must handle that without crashing.
+    Returns an empty list on no results or any scrape failure (after
+    retrying once) -- callers must handle that without crashing.
     """
     cabin = SEAT_CLASS_MAP.get(seat_class, "economy") if seat_class else "economy"
 
-    try:
-        query = create_query(
-            flights=[FlightQuery(date=departure_date, from_airport=origin, to_airport=destination)],
-            seat=cabin,
-            trip="one-way",
-            passengers=Passengers(adults=1),
-        )
-        flights = get_flights(query)
-    except Exception:
+    flights = None
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            query = create_query(
+                flights=[FlightQuery(date=departure_date, from_airport=origin, to_airport=destination)],
+                seat=cabin,
+                trip="one-way",
+                passengers=Passengers(adults=1),
+            )
+            flights = get_flights(query)
+            if flights:
+                break
+        except Exception:
+            flights = None
+        if attempt < MAX_ATTEMPTS - 1:
+            time.sleep(RETRY_DELAY_SECONDS)
+
+    if not flights:
         return []
 
     results = []

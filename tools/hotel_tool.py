@@ -8,8 +8,17 @@ see agents/hotel_agent.py, which derives them from the trip's
 travel_month via agents/date_utils.py.
 """
 
+import time
+
 from fast_hotels import get_hotels
 from fast_hotels.hotels_impl import Guests, HotelData
+
+# Seen in practice: a query can transiently return zero results (or fail)
+# even though the exact same query succeeds on an immediate retry -- this
+# is a live scrape, not a stable API, so one retry before giving up is a
+# cheap, justified reliability improvement.
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 2
 
 # No real hotel costs this little per night -- seen in practice: the
 # scraper occasionally returns a parsing artifact (e.g. a stray
@@ -31,17 +40,26 @@ def search_hotels(
     dates (YYYY-MM-DD), optionally capped at `max_price` per night,
     cheapest first.
 
-    Returns an empty list on no results or any scrape failure -- callers
-    must handle that without crashing.
+    Returns an empty list on no results or any scrape failure (after
+    retrying once) -- callers must handle that without crashing.
     """
-    try:
-        result = get_hotels(
-            hotel_data=[HotelData(checkin_date=checkin_date, checkout_date=checkout_date, location=city)],
-            guests=Guests(adults=1),
-            fetch_mode="common",
-            limit=limit * 2,  # fetch extra headroom in case max_price trims some out
-        )
-    except Exception:
+    result = None
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            result = get_hotels(
+                hotel_data=[HotelData(checkin_date=checkin_date, checkout_date=checkout_date, location=city)],
+                guests=Guests(adults=1),
+                fetch_mode="common",
+                limit=limit * 2,  # fetch extra headroom in case max_price trims some out
+            )
+            if result.hotels:
+                break
+        except Exception:
+            result = None
+        if attempt < MAX_ATTEMPTS - 1:
+            time.sleep(RETRY_DELAY_SECONDS)
+
+    if not result or not result.hotels:
         return []
 
     results = [

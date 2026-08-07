@@ -1,66 +1,47 @@
 """
-Spots & Weather Agent tool: queries the local destinations table
-(popular-tourist-destinations-and-their-features, loaded into SQLite by
-data_check.py) for activity-type spots, and checks travel-month climate
-fit via real historical weather data (tools/weather_tool.py) -- v2 no
-longer uses the dataset's mock "Best Season" column for this.
+Spots & Weather Agent tool -- v2: real named tourist attractions via
+OpenStreetMap (tools/places_tool.py), replacing the mock destinations
+dataset's fake "Destination Name" values (e.g. "Serene Temple"). Real
+season/climate fit is checked at the destination's actual coordinates
+(tools/weather_tool.py), not a country-level proxy.
 
-Note: "Destination Name" values are generic/templated (e.g. "Serene Temple"
-recurs across multiple countries) rather than real place names -- Country
-is the only realistic, stable field to query by. There is no itemized
-per-destination activity list in the raw data; the "Type" column (Beach,
-Adventure, Nature, Historical, Religious, City) stands in as the activity
-category, per row.
+Note: OSM has no star ratings and rarely has real per-visit prices --
+places are ranked by distance from the city center instead, and
+EstimatedCostUSD is a coarse fee-tag-based heuristic (see
+places_tool.py). This is real place data, not real pricing/rating data.
 """
 
-import sqlite3
-from pathlib import Path
-
-from tools.weather_tool import get_climate_suitability
-
-DB_PATH = Path(__file__).parent.parent / "data" / "vacation.db"
+from tools.places_tool import geocode_city, search_places_by_coords
+from tools.weather_tool import get_climate_suitability_for_coords
 
 
 def search_destinations(
-    country: str,
+    city: str,
+    country: str | None = None,
     category: str | None = None,
     travel_month: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    """Return destination/activity rows for `country` (exact match,
-    case-insensitive), optionally filtered by activity `category` (Type).
+    """Return real tourist attractions in `city`, closest to the city
+    center first, optionally filtered by `category` (e.g. "Museum").
 
     If `travel_month` is given, every result gets the same `season_match`
     bool and `climate` details, from one real historical-climate lookup
-    for the country's reference city (see weather_tool.py) -- the
-    destinations dataset has no per-row real location to check
-    individually. Returns an empty list if no rows match the country/
-    category filter.
+    at the city's actual coordinates. Returns an empty list if the city
+    can't be geocoded or has no tagged attractions nearby.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        query = """
-            SELECT "Destination Name", Country, Type, "Avg Cost (USD/day)",
-                   "Best Season", "Avg Rating", "UNESCO Site"
-            FROM destinations
-            WHERE LOWER(Country) = LOWER(?)
-        """
-        params: list = [country.strip()]
+    center = geocode_city(city, country)
+    if not center:
+        return []
+    lat, lon = center
 
-        if category is not None:
-            query += " AND Type = ?"
-            params.append(category)
+    rows = search_places_by_coords(lat, lon, limit=limit * 3 if category else limit)
 
-        query += " ORDER BY \"Avg Rating\" DESC LIMIT ?"
-        params.append(limit)
-
-        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
-    finally:
-        conn.close()
+    if category is not None:
+        rows = [r for r in rows if r["Type"].lower() == category.lower()][:limit]
 
     if travel_month is not None and rows:
-        climate = get_climate_suitability(country, travel_month)
+        climate = get_climate_suitability_for_coords(lat, lon, travel_month)
         for row in rows:
             row["season_match"] = climate["suitable"] if climate else None
             row["climate"] = climate
@@ -69,6 +50,6 @@ def search_destinations(
 
 
 if __name__ == "__main__":
-    for spot in search_destinations("Japan", travel_month="April", limit=5):
+    for spot in search_destinations("Paris", "France", travel_month="April", limit=5):
         print(spot)
-    print("No-match test:", search_destinations("Nowhereland"))
+    print("No-match test:", search_destinations("Nonexistentcityxyz123"))

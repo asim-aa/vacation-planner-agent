@@ -1,7 +1,6 @@
 """
 Weather tool -- v2: real climate data via Open-Meteo (free, keyless, no
-rate-limit concerns), replacing the mock "Best Season" column that used to
-drive season_match in spots_weather_tool.py.
+rate-limit concerns).
 
 Methodology and its limits (stated plainly, not hidden):
   - Open-Meteo's forecast API only covers ~16 days ahead, so a real
@@ -10,13 +9,14 @@ Methodology and its limits (stated plainly, not hidden):
     the same calendar month one year ago, as a proxy for "typical"
     conditions in that month. It is a real-data proxy, not a guarantee --
     a single past year is not a multi-year climate normal.
-  - The destinations dataset only has a Country field, not per-destination
-    coordinates (the "Destination Name" values are generic templates, not
-    real places -- see spots_weather_tool.py). So this checks climate at
-    one representative city per country, not the specific destination.
-    COUNTRY_REFERENCE_CITY documents which city stands in for each.
   - "Suitable" is a simple heuristic (comfortable temperature range, low
     average precipitation), not a rigorous climate classification.
+
+get_climate_suitability_for_coords() checks the actual requested city
+(coordinates from tools.places_tool.geocode_city) -- this is the one
+spots_weather_tool.py uses now. get_climate_suitability() (by country
+name) is kept for backward compatibility / standalone country-level
+checks, using one representative city per country.
 """
 
 from calendar import monthrange
@@ -26,8 +26,8 @@ import requests
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-# One representative (usually the most touristed) city per supported
-# country, since the destinations dataset only has country-level location.
+# One representative (usually the most touristed) city per country --
+# only used by the legacy get_climate_suitability(country, ...) path.
 COUNTRY_REFERENCE_CITY = {
     "Argentina": {"city": "Buenos Aires", "lat": -34.6037, "lon": -58.3816},
     "Australia": {"city": "Sydney", "lat": -33.8688, "lon": 151.2093},
@@ -63,14 +63,13 @@ COMFORTABLE_MAX_TEMP_RANGE_C = (15, 32)
 MAX_COMFORTABLE_DAILY_PRECIP_MM = 6.0
 
 
-def get_climate_suitability(country: str, month_name: str) -> dict | None:
-    """Return real historical climate data for `country`'s reference city
-    in `month_name`, plus a heuristic `suitable` bool. Returns None if the
-    country has no reference city mapped, or the API call fails.
+def get_climate_suitability_for_coords(lat: float, lon: float, month_name: str) -> dict | None:
+    """Return real historical climate data at (lat, lon) for `month_name`,
+    plus a heuristic `suitable` bool. Returns None on an invalid month or
+    API failure.
     """
-    ref = COUNTRY_REFERENCE_CITY.get(country)
     month_num = MONTH_NUMBERS.get(month_name.strip().lower())
-    if not ref or not month_num:
+    if not month_num:
         return None
 
     today = date.today()
@@ -79,18 +78,21 @@ def get_climate_suitability(country: str, month_name: str) -> dict | None:
     start_date = date(year, month_num, 1).isoformat()
     end_date = date(year, month_num, last_day).isoformat()
 
-    resp = requests.get(
-        ARCHIVE_URL,
-        params={
-            "latitude": ref["lat"],
-            "longitude": ref["lon"],
-            "start_date": start_date,
-            "end_date": end_date,
-            "daily": "temperature_2m_max,precipitation_sum",
-            "timezone": "auto",
-        },
-        timeout=20,
-    )
+    try:
+        resp = requests.get(
+            ARCHIVE_URL,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "start_date": start_date,
+                "end_date": end_date,
+                "daily": "temperature_2m_max,precipitation_sum",
+                "timezone": "auto",
+            },
+            timeout=20,
+        )
+    except requests.exceptions.RequestException:
+        return None
     if resp.status_code != 200:
         return None
 
@@ -107,12 +109,25 @@ def get_climate_suitability(country: str, month_name: str) -> dict | None:
     suitable = lo <= avg_max_temp_c <= hi and avg_precip_mm <= MAX_COMFORTABLE_DAILY_PRECIP_MM
 
     return {
-        "reference_city": ref["city"],
         "reference_year": year,
         "avg_max_temp_c": avg_max_temp_c,
         "avg_daily_precip_mm": avg_precip_mm,
         "suitable": suitable,
     }
+
+
+def get_climate_suitability(country: str, month_name: str) -> dict | None:
+    """Country-level convenience wrapper (one representative city per
+    country). Prefer get_climate_suitability_for_coords() with the actual
+    destination's real coordinates when available.
+    """
+    ref = COUNTRY_REFERENCE_CITY.get(country)
+    if not ref:
+        return None
+    result = get_climate_suitability_for_coords(ref["lat"], ref["lon"], month_name)
+    if result:
+        result["reference_city"] = ref["city"]
+    return result
 
 
 if __name__ == "__main__":
