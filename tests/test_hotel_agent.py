@@ -1,48 +1,73 @@
+"""
+hotel_agent_node calls fast-hotels (real network call). These tests
+monkeypatch search_hotels -- the same "inject a fake instead of the real
+dependency" pattern used for the LLM and flight agent -- so the agent's
+control flow (date computation, cost math, zero-result handling) is
+verified without any network call.
+"""
+
+import agents.hotel_agent as hotel_agent_module
 from agents.hotel_agent import hotel_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
+FAKE_RESULTS = [
+    {"HotelName": "Cheap Inn", "cityName": "Paris", "EstimatedPriceUSD": 80.0,
+     "GuestRating": 4.2, "Amenities": ["Free Wi-Fi"], "URL": "http://example.com/1"},
+    {"HotelName": "Pricier Hotel", "cityName": "Paris", "EstimatedPriceUSD": 150.0,
+     "GuestRating": 4.8, "Amenities": ["Pool"], "URL": "http://example.com/2"},
+]
 
-def test_zero_result_short_circuits_without_calling_llm():
+
+def test_zero_result_short_circuits_without_calling_llm(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: [])
     llm = RecordingFakeLLM()
-    state = {"destination_city": "Nonexistentville", "duration_days": 5}
 
+    state = {"destination_city": "Nonexistentville", "duration_days": 5, "travel_month": "April"}
     result = hotel_agent_node(state, llm=llm)
 
     assert result["hotel_results"] == []
     assert result["lodging_cost_estimate"] == 0.0
-    assert llm.prompts == []  # never called
+    assert llm.prompts == []
 
 
-def test_lodging_cost_uses_cheapest_result_times_duration():
+def test_lodging_cost_uses_cheapest_result_times_duration(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
     llm = FakeLLM("Great pick!")
-    state = {"destination_city": "Paris", "duration_days": 4}
 
+    state = {"destination_city": "Paris", "duration_days": 4, "travel_month": "April"}
     result = hotel_agent_node(state, llm=llm)
 
-    assert result["hotel_results"]
-    cheapest = min(r["EstimatedPriceUSD"] for r in result["hotel_results"])
-    assert result["lodging_cost_estimate"] == round(cheapest * 4, 2)
+    assert result["lodging_cost_estimate"] == round(80.0 * 4, 2)
 
 
-def test_recommendation_prompt_only_describes_the_cheapest_hotel():
+def test_recommendation_prompt_only_describes_the_cheapest_hotel(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
     llm = RecordingFakeLLM("Great pick!")
-    state = {"destination_city": "Paris", "duration_days": 4}
 
-    result = hotel_agent_node(state, llm=llm)
+    state = {"destination_city": "Paris", "duration_days": 4, "travel_month": "April"}
+    hotel_agent_node(state, llm=llm)
 
-    cheapest_name = result["hotel_results"][0]["HotelName"]
     assert len(llm.prompts) == 1
-    assert cheapest_name in llm.prompts[0]
-    # No other hotel name from the results should appear in the prompt --
-    # the LLM should only ever see the one hotel it's allowed to recommend.
-    other_names = [r["HotelName"] for r in result["hotel_results"][1:]]
-    assert not any(name in llm.prompts[0] for name in other_names)
+    assert "Cheap Inn" in llm.prompts[0]
+    assert "Pricier Hotel" not in llm.prompts[0]
 
 
-def test_respects_max_nightly_hotel_price():
-    llm = FakeLLM()
-    state = {"destination_city": "Paris", "duration_days": 4, "max_nightly_hotel_price": 50}
+def test_checkin_checkout_dates_passed_through(monkeypatch):
+    captured = {}
 
-    result = hotel_agent_node(state, llm=llm)
+    def fake_search_hotels(city, checkin_date, checkout_date, max_price=None, limit=10):
+        captured["checkin"] = checkin_date
+        captured["checkout"] = checkout_date
+        return FAKE_RESULTS
 
-    assert all(r["EstimatedPriceUSD"] <= 50 for r in result["hotel_results"])
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", fake_search_hotels)
+
+    state = {"destination_city": "Paris", "duration_days": 4, "travel_month": "April"}
+    hotel_agent_node(state, llm=FakeLLM())
+
+    assert captured["checkin"].endswith("-04-15")
+    # checkout should be checkin + duration_days
+    from datetime import date
+    checkin = date.fromisoformat(captured["checkin"])
+    checkout = date.fromisoformat(captured["checkout"])
+    assert (checkout - checkin).days == 4

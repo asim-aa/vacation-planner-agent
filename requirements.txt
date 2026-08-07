@@ -10,3 +10,4 @@ streamlit
 requests
 fast-flights
 airportsdata
+fast-hotels

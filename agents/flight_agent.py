@@ -1,26 +1,9 @@
 """Flight Agent: LangGraph node wrapping tools/flight_tool.py (v3, fast-flights)."""
 
-from calendar import monthrange
-from datetime import date
-
+from agents.date_utils import next_occurrence_of_month
 from agents.llm_client import get_llm
 from agents.state import TripState
 from tools.flight_tool import get_baseline_price, resolve_city_to_iata, search_flights
-
-MONTH_NAMES = [
-    "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december",
-]
-
-
-def _next_occurrence_of_month(month_name: str, day: int = 15) -> str:
-    """Return YYYY-MM-DD for the next future occurrence of `month_name`
-    (e.g. "April"), clamping `day` to that month's length."""
-    today = date.today()
-    month_num = MONTH_NAMES.index(month_name.strip().lower()) + 1
-    year = today.year if month_num >= today.month else today.year + 1
-    day = min(day, monthrange(year, month_num)[1])
-    return date(year, month_num, day).isoformat()
 
 
 def flight_agent_node(state: TripState, llm=None) -> dict:
@@ -46,9 +29,9 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
         }
 
     try:
-        departure_date = _next_occurrence_of_month(state.get("travel_month", "April"))
+        departure_date = next_occurrence_of_month(state.get("travel_month", "April"))
     except ValueError:
-        departure_date = _next_occurrence_of_month("April")
+        departure_date = next_occurrence_of_month("April")
 
     results = search_flights(
         origin=state["origin_airport"],

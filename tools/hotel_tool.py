@@ -1,74 +1,70 @@
 """
-Hotel Agent tool: queries the local hotels table (tbo-hotels-dataset, loaded
-into SQLite by data_check.py) by city and price. Never reads the raw CSV --
-callers only ever get back a small, structured list of dicts, so this is
-safe to feed directly into an LLM prompt.
+Hotel Agent tool -- v2: live hotel search via fast-hotels (scrapes Google
+Hotels, no API key, no formal quota), replacing the v1 mock dataset and
+its synthetic (rating-derived) pricing.
 
-Note: the raw dataset has no price field. EstimatedPriceUSD is a synthetic
-nightly rate derived at load time (see data_check.py). Swapping in a real
-price source later only requires changing how that column is populated --
-this tool's interface does not need to change.
+Note: unlike the mock version, this needs real checkin/checkout dates --
+see agents/hotel_agent.py, which derives them from the trip's
+travel_month via agents/date_utils.py.
 """
 
-import sqlite3
-from pathlib import Path
+from fast_hotels import get_hotels
+from fast_hotels.hotels_impl import Guests, HotelData
 
-DB_PATH = Path(__file__).parent.parent / "data" / "vacation.db"
+# No real hotel costs this little per night -- seen in practice: the
+# scraper occasionally returns a parsing artifact (e.g. a stray
+# "Copyright The Closure Library Authors." string pulled from page JS)
+# as if it were a $1/night hotel. Filtering below this floor is a cheap,
+# justified guard against that class of garbage without trying to
+# validate hotel names generally.
+MIN_PLAUSIBLE_NIGHTLY_PRICE = 10.0
 
 
 def search_hotels(
     city: str,
+    checkin_date: str,
+    checkout_date: str,
     max_price: float | None = None,
-    min_rating: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    """Return hotels in `city`, optionally capped at `max_price` per night
-    and/or filtered to an exact `min_rating` tier (e.g. "ThreeStar"),
+    """Return live hotel options in `city` for the given checkin/checkout
+    dates (YYYY-MM-DD), optionally capped at `max_price` per night,
     cheapest first.
 
-    Tries an exact case-insensitive match on `cityName` first. US entries in
-    this dataset are stored as "City,   State" (e.g. "Atlanta,   Georgia"),
-    so a plain city name falls back to a prefix match on "city,%" before
-    giving up.
-
-    Returns an empty list if no hotels match -- callers must handle that
-    without crashing, per the orchestrator's zero-result requirement.
+    Returns an empty list on no results or any scrape failure -- callers
+    must handle that without crashing.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
     try:
-        base_query = """
-            SELECT HotelName, cityName, HotelRating, EstimatedPriceUSD, HotelFacilities
-            FROM hotels
-            WHERE {city_clause}
-        """
-        filters = ""
-        params: list = []
+        result = get_hotels(
+            hotel_data=[HotelData(checkin_date=checkin_date, checkout_date=checkout_date, location=city)],
+            guests=Guests(adults=1),
+            fetch_mode="common",
+            limit=limit * 2,  # fetch extra headroom in case max_price trims some out
+        )
+    except Exception:
+        return []
 
-        if max_price is not None:
-            filters += " AND EstimatedPriceUSD <= ?"
-            params.append(max_price)
+    results = [
+        {
+            "HotelName": h.name,
+            "cityName": city,
+            "EstimatedPriceUSD": h.price,
+            "GuestRating": h.rating,
+            "Amenities": h.amenities or [],
+            "URL": h.url,
+        }
+        for h in (result.hotels or [])
+        if h.price is not None and h.price >= MIN_PLAUSIBLE_NIGHTLY_PRICE
+    ]
 
-        if min_rating is not None:
-            filters += " AND HotelRating = ?"
-            params.append(min_rating)
+    if max_price is not None:
+        results = [r for r in results if r["EstimatedPriceUSD"] <= max_price]
 
-        filters += " ORDER BY EstimatedPriceUSD ASC LIMIT ?"
-
-        city_clean = city.strip()
-
-        exact_query = base_query.format(city_clause="LOWER(cityName) = LOWER(?)") + filters
-        rows = conn.execute(exact_query, [city_clean, *params, limit]).fetchall()
-
-        if not rows:
-            prefix_query = base_query.format(city_clause="LOWER(cityName) LIKE LOWER(?)") + filters
-            rows = conn.execute(prefix_query, [f"{city_clean},%", *params, limit]).fetchall()
-
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+    results.sort(key=lambda r: r["EstimatedPriceUSD"])
+    return results[:limit]
 
 
 if __name__ == "__main__":
-    for hotel in search_hotels("Paris", max_price=200):
-        print(hotel["HotelName"], hotel["HotelRating"], hotel["EstimatedPriceUSD"])
+    for hotel in search_hotels("Paris", "2026-09-15", "2026-09-18", max_price=150, limit=5):
+        print(hotel)
+    print("No-match test:", search_hotels("Nowhereland1234", "2026-09-15", "2026-09-18"))

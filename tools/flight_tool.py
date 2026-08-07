@@ -63,8 +63,11 @@ def resolve_city_to_iata(city_name: str, country_name: str | None = None) -> str
 
 def _format_datetime(dt) -> str:
     year, month, day = dt.date
-    time_parts = list(dt.time) + [0] * (2 - len(dt.time))
-    hour, minute = time_parts[:2]
+    # Some scraped entries (seen on overnight/red-eye legs) carry a None
+    # inside the time list rather than a short list -- coerce defensively
+    # rather than let a single malformed record crash the whole search.
+    time_parts = [t if t is not None else 0 for t in dt.time] + [0, 0]
+    hour, minute = time_parts[0], time_parts[1]
     return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}"
 
 
@@ -101,17 +104,22 @@ def search_flights(
         legs = f.flights
         if not legs:
             continue
-        first_leg, last_leg = legs[0], legs[-1]
-        results.append({
-            "Airline": f.airlines[0] if f.airlines else "Unknown",
-            "Departure_Airport": first_leg.from_airport.code,
-            "Arrival_Airport": last_leg.to_airport.code,
-            "Seat_Class": seat_class or "Economy",
-            "Price_USD": float(f.price),
-            "Departure_Time": _format_datetime(first_leg.departure),
-            "Arrival_Time": _format_datetime(last_leg.arrival),
-            "Stops": len(legs) - 1,
-        })
+        try:
+            first_leg, last_leg = legs[0], legs[-1]
+            results.append({
+                "Airline": f.airlines[0] if f.airlines else "Unknown",
+                "Departure_Airport": first_leg.from_airport.code,
+                "Arrival_Airport": last_leg.to_airport.code,
+                "Seat_Class": seat_class or "Economy",
+                "Price_USD": float(f.price),
+                "Departure_Time": _format_datetime(first_leg.departure),
+                "Arrival_Time": _format_datetime(last_leg.arrival),
+                "Stops": len(legs) - 1,
+            })
+        except (TypeError, ValueError, AttributeError, IndexError):
+            # One malformed record (seen: None inside a time list on some
+            # overnight legs) shouldn't drop the whole search -- skip it.
+            continue
 
     if max_price is not None:
         results = [r for r in results if r["Price_USD"] <= max_price]

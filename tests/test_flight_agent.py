@@ -8,7 +8,8 @@ zero-result handling) is verified without any network call.
 """
 
 import agents.flight_agent as flight_agent_module
-from agents.flight_agent import _next_occurrence_of_month, flight_agent_node
+from agents.date_utils import next_occurrence_of_month
+from agents.flight_agent import flight_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
 FAKE_RESULTS = [
@@ -22,7 +23,7 @@ FAKE_RESULTS = [
 
 
 def test_next_occurrence_of_month_returns_future_date():
-    result = _next_occurrence_of_month("April")
+    result = next_occurrence_of_month("April")
     assert result.endswith("-04-15")
 
 

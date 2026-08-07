@@ -1,5 +1,6 @@
-"""Hotel Agent: LangGraph node wrapping tools/hotel_tool.py."""
+"""Hotel Agent: LangGraph node wrapping tools/hotel_tool.py (v2, fast-hotels)."""
 
+from agents.date_utils import add_days, next_occurrence_of_month
 from agents.llm_client import get_llm
 from agents.state import TripState
 from tools.hotel_tool import search_hotels
@@ -8,8 +9,18 @@ from tools.hotel_tool import search_hotels
 def hotel_agent_node(state: TripState, llm=None) -> dict:
     """`llm` is injectable so tests can pass a fake instead of hitting the
     real endpoint; defaults to the real client when not provided."""
+    duration_days = state.get("duration_days", 5)
+
+    try:
+        checkin_date = next_occurrence_of_month(state.get("travel_month", "April"))
+    except ValueError:
+        checkin_date = next_occurrence_of_month("April")
+    checkout_date = add_days(checkin_date, duration_days)
+
     results = search_hotels(
         city=state["destination_city"],
+        checkin_date=checkin_date,
+        checkout_date=checkout_date,
         max_price=state.get("max_nightly_hotel_price"),
         limit=10,
     )
@@ -41,7 +52,6 @@ def hotel_agent_node(state: TripState, llm=None) -> dict:
     )
     recommendation = llm.invoke(prompt).content
 
-    duration_days = state.get("duration_days", 5)
     cheapest_nightly = top_hotel["EstimatedPriceUSD"]
 
     return {
