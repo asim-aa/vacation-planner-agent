@@ -1,36 +1,37 @@
 """
-tools/flight_tool.py is v2, backed by a live, quota-limited RapidAPI
-subscription (20 requests/month on the free tier). The default test run
-must NOT make live calls -- these tests cover only the parts of the
-module that are pure logic (no network):
-  - resolve_airport() on a known/cached airport code (dict lookup, 0 requests)
-  - get_baseline_price() (operates on an already-fetched results list)
-
-Live-call tests (resolve_city_to_airport, search_flights_by_ids against
-the real API) are gated behind RUN_LIVE_FLIGHT_TESTS=1 so they never run
-by accident and burn scarce quota -- run them deliberately, rarely:
-    RUN_LIVE_FLIGHT_TESTS=1 pytest tests/test_flight_tool.py -v
+tools/flight_tool.py is v3, backed by fast-flights (scrapes Google
+Flights, no API key, no formal quota) plus fully offline airport
+resolution via airportsdata. resolve_city_to_iata() is pure local lookup
+so it's tested directly; search_flights()/get_baseline_price() make a
+real (free, unrestricted) network call, gated the same way the earlier
+quota-limited tests were, in case Google ever rate-limits or blocks the
+scraper -- keeps the default suite fast and independent of that.
 """
 
 import os
 
 import pytest
 
-from tools.flight_tool import get_baseline_price, resolve_airport, search_flights_by_ids
+from tools.flight_tool import get_baseline_price, resolve_city_to_iata, search_flights
 
 live_only = pytest.mark.skipif(
     os.environ.get("RUN_LIVE_FLIGHT_TESTS") != "1",
-    reason="live RapidAPI call -- set RUN_LIVE_FLIGHT_TESTS=1 to run (costs quota)",
+    reason="live network call (Google Flights scrape) -- set RUN_LIVE_FLIGHT_TESTS=1 to run",
 )
 
 
-def test_resolve_airport_known_code_hits_local_cache_no_network():
-    result = resolve_airport("JFK")
-    assert result == {"skyId": "JFK", "entityId": "95565058"}
+def test_resolve_city_to_iata_known_city():
+    assert resolve_city_to_iata("Paris", "France") == "CDG"
 
 
-def test_resolve_airport_known_code_is_case_insensitive():
-    assert resolve_airport("jfk") == resolve_airport("JFK")
+def test_resolve_city_to_iata_disambiguates_by_country():
+    # "Paris" alone matches multiple airports across countries (including
+    # small US towns literally named Paris) -- country narrows correctly.
+    assert resolve_city_to_iata("Paris", "France") != resolve_city_to_iata("Paris", "USA")
+
+
+def test_resolve_city_to_iata_unknown_city_returns_none():
+    assert resolve_city_to_iata("Nowhereland") is None
 
 
 def test_get_baseline_price_averages_given_results():
@@ -47,10 +48,13 @@ def test_get_baseline_price_empty_list_returns_none():
 
 
 @live_only
-def test_live_search_flights_by_ids_returns_real_results():
-    jfk = resolve_airport("JFK")
-    atl = resolve_airport("ATL")
-    results = search_flights_by_ids(jfk, atl, "2026-09-15", limit=5)
+def test_live_search_flights_returns_real_results():
+    results = search_flights("JFK", "ATL", "2026-09-15", limit=5)
     assert results
     prices = [r["Price_USD"] for r in results]
     assert prices == sorted(prices)
+
+
+@live_only
+def test_live_search_flights_unknown_route_returns_empty():
+    assert search_flights("XXX", "YYY", "2026-09-15") == []

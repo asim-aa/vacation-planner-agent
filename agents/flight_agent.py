@@ -1,16 +1,11 @@
-"""Flight Agent: LangGraph node wrapping tools/flight_tool.py (v2, live API)."""
+"""Flight Agent: LangGraph node wrapping tools/flight_tool.py (v3, fast-flights)."""
 
 from calendar import monthrange
 from datetime import date
 
 from agents.llm_client import get_llm
 from agents.state import TripState
-from tools.flight_tool import (
-    get_baseline_price,
-    resolve_airport,
-    resolve_city_to_airport,
-    search_flights_by_ids,
-)
+from tools.flight_tool import get_baseline_price, resolve_city_to_iata, search_flights
 
 MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
@@ -32,31 +27,20 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
     """`llm` is injectable so tests can pass a fake instead of hitting the
     real endpoint; defaults to the real client when not provided.
 
-    Resolves origin/destination exactly once and makes exactly one search
-    request -- the baseline price is computed from that same response, not
-    a second live call -- since the free API tier is quota-limited.
+    Airport resolution (tools.flight_tool.resolve_city_to_iata) is fully
+    offline -- no network call, no quota -- so any real destination city
+    works, not just a fixed airport list.
     """
     seat_class = state.get("seat_class", "Economy")
 
-    origin_ids = resolve_airport(state["origin_airport"])
-
-    # A known IATA code (from parse_request's fixed airport list) resolves
-    # for free; anything else -- any real city -- resolves via free-text
-    # lookup, which is what removes the old 8-airport limit.
-    destination_airport = state.get("destination_airport")
-    if destination_airport:
-        destination_ids = resolve_airport(destination_airport)
-        destination_code = destination_airport
-    else:
-        destination_ids = resolve_city_to_airport(state["destination_city"])
-        destination_code = destination_ids["displayCode"] if destination_ids else None
-
-    if not origin_ids or not destination_ids:
+    destination_code = state.get("destination_airport") or resolve_city_to_iata(
+        state["destination_city"], state.get("destination_country")
+    )
+    if not destination_code:
         return {
             "flight_results": [],
             "flight_recommendation": (
-                f"Couldn't resolve an airport for "
-                f"{state['origin_airport'] if not origin_ids else state['destination_city']}."
+                f"Couldn't find an airport for {state['destination_city']}."
             ),
             "flight_cost_estimate": 0.0,
         }
@@ -66,8 +50,12 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
     except ValueError:
         departure_date = _next_occurrence_of_month("April")
 
-    results = search_flights_by_ids(
-        origin_ids, destination_ids, departure_date, seat_class=seat_class, limit=10
+    results = search_flights(
+        origin=state["origin_airport"],
+        destination=destination_code,
+        departure_date=departure_date,
+        seat_class=seat_class,
+        limit=10,
     )
 
     if not results:

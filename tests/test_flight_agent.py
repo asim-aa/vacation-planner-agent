@@ -1,18 +1,15 @@
 """
-flight_agent_node calls the live, quota-limited Air Scraper API. These
-tests monkeypatch the resolve/search functions it imports (the same
-"inject a fake instead of the real dependency" pattern used for the LLM)
-so the agent's control flow -- resolution, date computation, cost math,
-zero-result handling -- is verified without any network calls or quota
-cost.
+flight_agent_node calls fast-flights (real network, no quota, but still
+worth keeping out of the deterministic default suite). These tests
+monkeypatch resolve_city_to_iata/search_flights -- the same
+"inject a fake instead of the real dependency" pattern used for the LLM
+-- so the agent's control flow (resolution, date computation, cost math,
+zero-result handling) is verified without any network call.
 """
 
 import agents.flight_agent as flight_agent_module
 from agents.flight_agent import _next_occurrence_of_month, flight_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
-
-FAKE_ORIGIN_IDS = {"skyId": "JFK", "entityId": "1"}
-FAKE_DEST_IDS = {"skyId": "ATL", "entityId": "2", "displayCode": "ATL"}
 
 FAKE_RESULTS = [
     {"Airline": "Delta", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
@@ -30,13 +27,12 @@ def test_next_occurrence_of_month_returns_future_date():
 
 
 def test_known_destination_airport_skips_city_resolution(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
     called_city_resolve = []
     monkeypatch.setattr(
-        flight_agent_module, "resolve_city_to_airport",
-        lambda city: called_city_resolve.append(city) or FAKE_DEST_IDS,
+        flight_agent_module, "resolve_city_to_iata",
+        lambda city, country=None: called_city_resolve.append(city) or "ATL",
     )
-    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
 
     state = {
         "destination_city": "Atlanta",
@@ -51,12 +47,12 @@ def test_known_destination_airport_skips_city_resolution(monkeypatch):
 
 
 def test_unknown_destination_falls_back_to_city_resolution(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
-    monkeypatch.setattr(flight_agent_module, "resolve_city_to_airport", lambda city: FAKE_DEST_IDS)
-    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+    monkeypatch.setattr(flight_agent_module, "resolve_city_to_iata", lambda city, country=None: "CDG")
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
 
     state = {
         "destination_city": "Paris",
+        "destination_country": "France",
         "origin_airport": "JFK",
         "destination_airport": None,
         "travel_month": "September",
@@ -67,8 +63,7 @@ def test_unknown_destination_falls_back_to_city_resolution(monkeypatch):
 
 
 def test_unresolvable_destination_returns_empty_without_crashing(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
-    monkeypatch.setattr(flight_agent_module, "resolve_city_to_airport", lambda city: None)
+    monkeypatch.setattr(flight_agent_module, "resolve_city_to_iata", lambda city, country=None: None)
     llm = RecordingFakeLLM()
 
     state = {
@@ -85,8 +80,7 @@ def test_unresolvable_destination_returns_empty_without_crashing(monkeypatch):
 
 
 def test_zero_search_results_short_circuits_without_calling_llm(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
-    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: [])
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: [])
     llm = RecordingFakeLLM()
 
     state = {
@@ -103,8 +97,7 @@ def test_zero_search_results_short_circuits_without_calling_llm(monkeypatch):
 
 
 def test_cost_estimate_is_cheapest_result_doubled(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
-    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
 
     state = {
         "destination_city": "Atlanta",
@@ -118,8 +111,7 @@ def test_cost_estimate_is_cheapest_result_doubled(monkeypatch):
 
 
 def test_recommendation_prompt_only_describes_the_cheapest_flight(monkeypatch):
-    monkeypatch.setattr(flight_agent_module, "resolve_airport", lambda code: FAKE_ORIGIN_IDS)
-    monkeypatch.setattr(flight_agent_module, "search_flights_by_ids", lambda *a, **k: FAKE_RESULTS)
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
     llm = RecordingFakeLLM()
 
     state = {
