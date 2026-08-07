@@ -21,6 +21,7 @@ from tools.flight_tool import (
     resolve_city_to_iata_candidates,
     search_flights,
     search_flights_via_hub,
+    select_flight,
 )
 
 live_only = pytest.mark.skipif(
@@ -72,6 +73,37 @@ def test_get_baseline_price_averages_given_results():
 
 def test_get_baseline_price_empty_list_returns_none():
     assert get_baseline_price([]) is None
+
+
+FLIGHTS_BY_PRICE = [
+    {"Airline": "Budget Air", "Price_USD": 200.0, "Stops": 2},
+    {"Airline": "Mid Air", "Price_USD": 350.0, "Stops": 1},
+    {"Airline": "Direct Air", "Price_USD": 500.0, "Stops": 0},
+]
+
+
+def test_select_flight_cheapest_returns_first_result():
+    assert select_flight(FLIGHTS_BY_PRICE, optimize_for="cheapest") == FLIGHTS_BY_PRICE[0]
+
+
+def test_select_flight_comfort_picks_fewest_stops_within_budget():
+    # Direct Air (0 stops) is the most comfortable, but only Mid Air (1
+    # stop) fits under this budget ceiling.
+    picked = select_flight(FLIGHTS_BY_PRICE, optimize_for="comfort", max_price=400.0)
+    assert picked["Airline"] == "Mid Air"
+
+
+def test_select_flight_comfort_falls_back_to_cheapest_when_nothing_fits():
+    picked = select_flight(FLIGHTS_BY_PRICE, optimize_for="comfort", max_price=50.0)
+    assert picked == FLIGHTS_BY_PRICE[0]
+
+
+def test_select_flight_comfort_ties_broken_by_price():
+    tied = [
+        {"Airline": "A", "Price_USD": 300.0, "Stops": 1},
+        {"Airline": "B", "Price_USD": 250.0, "Stops": 1},
+    ]
+    assert select_flight(tied, optimize_for="comfort", max_price=1000.0)["Airline"] == "B"
 
 
 def _fake_single_flight():

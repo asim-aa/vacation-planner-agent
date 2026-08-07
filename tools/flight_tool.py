@@ -262,6 +262,22 @@ def search_flights_via_hub(
     return []
 
 
+def select_flight(results: list[dict], optimize_for: str = "cheapest", max_price: float | None = None) -> dict:
+    """Pick one flight from already-fetched `results` -- no new search.
+
+    "cheapest" (default): results[0] (results are already price-sorted).
+    "comfort": fewest stops among options at or under `max_price` (ties
+    broken toward the cheaper option); falls back to the cheapest overall
+    if nothing fits under `max_price`, so this never raises or picks
+    something the trip can't afford.
+    """
+    if optimize_for == "comfort":
+        affordable = [r for r in results if max_price is None or r["Price_USD"] <= max_price]
+        if affordable:
+            return min(affordable, key=lambda r: (r["Stops"], r["Price_USD"]))
+    return results[0]
+
+
 def get_baseline_price(results: list[dict]) -> float | None:
     """Average price across already-fetched flight results, for use as a
     baseline cost in budget math. Takes results directly -- it does NOT

@@ -8,6 +8,7 @@ from tools.flight_tool import (
     resolve_city_to_iata_candidates,
     search_flights,
     search_flights_via_hub,
+    select_flight,
 )
 
 # Bounds how many (origin, destination) candidate pairs we'll try when the
@@ -16,6 +17,61 @@ from tools.flight_tool import (
 # resolver can't always tell which is the real hub. Capped so a genuinely
 # unserved route still fails in a bounded number of live searches.
 MAX_ROUTE_ATTEMPTS = 4
+
+
+def build_flight_output(
+    results: list[dict], seat_class: str, optimize_for: str = "cheapest", max_price: float | None = None, llm=None
+) -> dict:
+    """Select + narrate a flight from already-fetched `results` -- no
+    network call. Split out from flight_agent_node so a budget-
+    reallocation follow-up (e.g. "spend the rest of my budget on a more
+    comfortable flight") can re-pick from the SAME candidates instead of
+    re-scraping Google Flights, which is both wasteful and non-
+    deterministic (see the identical fix already made for hotels).
+    """
+    baseline = get_baseline_price(results)
+
+    # Pin the recommendation (and the itinerary card, which reads
+    # flight_results[0]) to this exact pick, whichever mode chose it --
+    # otherwise the displayed card and the narrative/cost estimate can
+    # disagree (same class of bug already fixed for hotels).
+    top_flight = select_flight(results, optimize_for=optimize_for, max_price=max_price)
+    ordered_results = [top_flight] + [f for f in results if f is not top_flight]
+
+    llm = llm or get_llm()
+    pick_description = (
+        f"the option with the fewest stops that still fits the trip's budget (at or under ${max_price})"
+        if optimize_for == "comfort"
+        else f"the cheapest option available, against a baseline average price of ${baseline}"
+    )
+    prompt = (
+        f"You are a travel planning assistant. This flight (JSON) is {pick_description}. "
+        "Write 1-2 sentences recommending it. Only use the "
+        "data given, do not invent details, and do not suggest a different "
+        f"flight.\n\n{top_flight}"
+    )
+    recommendation = llm.invoke(prompt).content
+
+    # Don't rely on the LLM to notice and mention this on its own -- a
+    # self-assembled connection is materially different (two separate
+    # tickets, real misconnection risk) and that caveat must always show,
+    # not just when the model happens to surface it.
+    if top_flight.get("SelfConnectedVia"):
+        recommendation = (
+            f"⚠️ No single itinerary was found for this route, so this is a "
+            f"self-assembled connection via {top_flight['SelfConnectedVia']} -- "
+            "book as two separate tickets, which carries real misconnection risk. "
+            f"{recommendation}"
+        )
+
+    one_way_price = top_flight["Price_USD"]
+
+    return {
+        "flight_results": ordered_results,
+        "flight_recommendation": recommendation,
+        # Round-trip estimate: selected one-way fare, doubled for the return leg.
+        "flight_cost_estimate": round(one_way_price * 2, 2),
+    }
 
 
 def flight_agent_node(state: TripState, llm=None) -> dict:
@@ -99,41 +155,4 @@ def flight_agent_node(state: TripState, llm=None) -> dict:
             "flight_cost_estimate": 0.0,
         }
 
-    baseline = get_baseline_price(results)
-
-    # `results` is already sorted cheapest-first by the tool. Pin the
-    # recommendation to that exact flight instead of letting the LLM pick
-    # freely -- otherwise its narrative pick and the cost estimate (which
-    # uses results[0]) can disagree.
-    top_flight = results[0]
-
-    llm = llm or get_llm()
-    prompt = (
-        "You are a travel planning assistant. This flight (JSON) is the "
-        f"cheapest option available, against a baseline average price of "
-        f"${baseline}. Write 1-2 sentences recommending it. Only use the "
-        "data given, do not invent details, and do not suggest a different "
-        f"flight.\n\n{top_flight}"
-    )
-    recommendation = llm.invoke(prompt).content
-
-    # Don't rely on the LLM to notice and mention this on its own -- a
-    # self-assembled connection is materially different (two separate
-    # tickets, real misconnection risk) and that caveat must always show,
-    # not just when the model happens to surface it.
-    if top_flight.get("SelfConnectedVia"):
-        recommendation = (
-            f"⚠️ No single itinerary was found for this route, so this is a "
-            f"self-assembled connection via {top_flight['SelfConnectedVia']} -- "
-            "book as two separate tickets, which carries real misconnection risk. "
-            f"{recommendation}"
-        )
-
-    cheapest_one_way = top_flight["Price_USD"]
-
-    return {
-        "flight_results": results,
-        "flight_recommendation": recommendation,
-        # Round-trip estimate: cheapest one-way fare, doubled for the return leg.
-        "flight_cost_estimate": round(cheapest_one_way * 2, 2),
-    }
+    return build_flight_output(results, seat_class, llm=llm)

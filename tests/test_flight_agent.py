@@ -21,7 +21,7 @@ falls back to the next candidate pair when the first returns zero flights.
 
 import agents.flight_agent as flight_agent_module
 from agents.date_utils import next_occurrence_of_month
-from agents.flight_agent import flight_agent_node
+from agents.flight_agent import build_flight_output, flight_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
 FAKE_RESULTS = [
@@ -31,6 +31,15 @@ FAKE_RESULTS = [
     {"Airline": "United", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
      "Seat_Class": "Economy", "Price_USD": 150.0, "Departure_Time": "t3",
      "Arrival_Time": "t4", "Stops": 1},
+]
+
+COMFORT_FAKE_RESULTS = [
+    {"Airline": "Cheap Multi-Stop", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
+     "Seat_Class": "Economy", "Price_USD": 100.0, "Departure_Time": "t1",
+     "Arrival_Time": "t2", "Stops": 2},
+    {"Airline": "Direct Flight", "Departure_Airport": "JFK", "Arrival_Airport": "ATL",
+     "Seat_Class": "Economy", "Price_USD": 180.0, "Departure_Time": "t3",
+     "Arrival_Time": "t4", "Stops": 0},
 ]
 
 BASE_STATE = {
@@ -122,6 +131,27 @@ def test_cost_estimate_is_cheapest_result_doubled(monkeypatch):
     result = flight_agent_node(BASE_STATE, llm=FakeLLM())
 
     assert result["flight_cost_estimate"] == 200.0  # cheapest (100.0) * 2
+
+
+def test_build_flight_output_comfort_mode_picks_fewer_stops_within_budget(monkeypatch):
+    def fail_if_called(*a, **k):
+        raise AssertionError("build_flight_output must not search again")
+
+    monkeypatch.setattr(flight_agent_module, "search_flights", fail_if_called)
+    llm = RecordingFakeLLM("Great pick!")
+
+    result = build_flight_output(
+        COMFORT_FAKE_RESULTS, seat_class="Economy", optimize_for="comfort", max_price=200.0, llm=llm
+    )
+
+    assert "Direct Flight" in llm.prompts[0]
+    assert "fewest stops" in llm.prompts[0]
+    assert result["flight_cost_estimate"] == 360.0  # 180.0 * 2
+    # Regression test: the displayed card (flight_results[0]) must match
+    # the pick the recommendation text describes -- a prior version left
+    # `results` in its original cheapest-first order, so the card kept
+    # showing the old cheapest flight even after a comfort-mode upgrade.
+    assert result["flight_results"][0]["Airline"] == "Direct Flight"
 
 
 def test_recommendation_prompt_only_describes_the_cheapest_flight(monkeypatch):

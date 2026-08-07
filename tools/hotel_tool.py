@@ -82,6 +82,23 @@ def search_hotels(
     return results[:limit]
 
 
+def select_hotel(results: list[dict], optimize_for: str = "cheapest") -> dict:
+    """Pick one hotel from already-fetched, already-budget-filtered
+    `results`. Does NOT search again or change the budget ceiling --
+    `search_hotels(..., max_price=...)` already guarantees every result
+    fits, so "quality" mode is purely about spending up to that ceiling
+    on a better-rated stay instead of defaulting to the cheapest one.
+
+    "cheapest" (default): results[0] (results are already price-sorted).
+    "quality": highest GuestRating (missing rating loses to any real
+    rating); ties broken toward the cheaper of the equally-rated options,
+    since there's no reason to pay more for the same quality signal.
+    """
+    if optimize_for == "quality":
+        return max(results, key=lambda h: (h.get("GuestRating") or -1, -h["EstimatedPriceUSD"]))
+    return results[0]
+
+
 if __name__ == "__main__":
     for hotel in search_hotels("Paris", "2026-09-15", "2026-09-18", max_price=150, limit=5):
         print(hotel)

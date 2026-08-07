@@ -17,12 +17,36 @@ import os
 
 import pytest
 
-from tools.hotel_tool import search_hotels
+from tools.hotel_tool import search_hotels, select_hotel
 
 live_only = pytest.mark.skipif(
     os.environ.get("RUN_LIVE_HOTEL_TESTS") != "1",
     reason="live network call (Google Hotels scrape) -- set RUN_LIVE_HOTEL_TESTS=1 to run",
 )
+
+RESULTS_BY_PRICE = [
+    {"HotelName": "Budget Inn", "EstimatedPriceUSD": 60.0, "GuestRating": 3.5},
+    {"HotelName": "Mid Hotel", "EstimatedPriceUSD": 90.0, "GuestRating": 4.8},
+    {"HotelName": "Splurge Suites", "EstimatedPriceUSD": 140.0, "GuestRating": 4.8},
+]
+
+
+def test_select_hotel_cheapest_returns_first_result():
+    assert select_hotel(RESULTS_BY_PRICE, optimize_for="cheapest") == RESULTS_BY_PRICE[0]
+
+
+def test_select_hotel_quality_picks_highest_rating():
+    # Mid Hotel and Splurge Suites tie on rating (4.8) -- quality mode
+    # should still prefer the cheaper of the two, not just "spend more".
+    assert select_hotel(RESULTS_BY_PRICE, optimize_for="quality") == RESULTS_BY_PRICE[1]
+
+
+def test_select_hotel_quality_ignores_missing_ratings():
+    results = [
+        {"HotelName": "Unrated", "EstimatedPriceUSD": 200.0, "GuestRating": None},
+        {"HotelName": "Rated", "EstimatedPriceUSD": 90.0, "GuestRating": 4.0},
+    ]
+    assert select_hotel(results, optimize_for="quality")["HotelName"] == "Rated"
 
 
 @live_only

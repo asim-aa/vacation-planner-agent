@@ -7,7 +7,7 @@ verified without any network call.
 """
 
 import agents.hotel_agent as hotel_agent_module
-from agents.hotel_agent import hotel_agent_node
+from agents.hotel_agent import build_hotel_output, hotel_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
 FAKE_RESULTS = [
@@ -50,6 +50,41 @@ def test_recommendation_prompt_only_describes_the_cheapest_hotel(monkeypatch):
     assert len(llm.prompts) == 1
     assert "Cheap Inn" in llm.prompts[0]
     assert "Pricier Hotel" not in llm.prompts[0]
+
+
+def test_optimize_for_quality_picks_better_rated_hotel_and_reorders_results(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
+    llm = RecordingFakeLLM("Great pick!")
+
+    state = {"destination_city": "Paris", "duration_days": 4, "travel_month": "April"}
+    result = hotel_agent_node(state, llm=llm, optimize_for="quality")
+
+    # Pricier Hotel (4.8) outranks Cheap Inn (4.2) in quality mode, even
+    # though it's not the cheapest -- it's still within the same
+    # already-budget-filtered results, not a new/higher-ceiling search.
+    assert result["hotel_results"][0]["HotelName"] == "Pricier Hotel"
+    assert result["hotel_results"][1]["HotelName"] == "Cheap Inn"
+    assert result["lodging_cost_estimate"] == round(150.0 * 4, 2)
+    assert "Pricier Hotel" in llm.prompts[0]
+    assert "best-rated" in llm.prompts[0]
+
+
+def test_build_hotel_output_reselects_without_searching_again(monkeypatch):
+    # Regression test: a budget-reallocation follow-up (see app.py's
+    # refine_hotel_for_quality) must re-pick from ALREADY-fetched results
+    # without calling search_hotels again -- a fresh Google Hotels scrape
+    # is live and non-deterministic, so re-searching could silently swap
+    # in a totally different set of hotels instead of "spending more on
+    # what we already found".
+    def fail_if_called(*a, **k):
+        raise AssertionError("build_hotel_output must not search again")
+
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", fail_if_called)
+
+    result = build_hotel_output(FAKE_RESULTS, duration_days=4, optimize_for="quality", llm=FakeLLM())
+
+    assert result["hotel_results"][0]["HotelName"] == "Pricier Hotel"
+    assert result["lodging_cost_estimate"] == round(150.0 * 4, 2)
 
 
 def test_checkin_checkout_dates_passed_through(monkeypatch):
