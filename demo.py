@@ -11,11 +11,9 @@ from agents.hotel_agent import hotel_agent_node
 from agents.spots_weather_agent import spots_weather_agent_node
 from agents.state import TripState
 
-# Edit these to try a different trip. origin_city/destination_city can be
-# any real city -- flight/hotel search are both live now, no fixed list.
-# destination_country must be a real country name present in the
-# destinations dataset (22 countries total -- try France, Japan, Italy,
-# Australia, etc.) since that dataset is still mock data.
+# Edit these to try a different trip. origin_city/destination_city/
+# destination_country can be any real place -- flights, hotels, activities,
+# and weather are all live now, no fixed list or mock dataset.
 state: TripState = {
     "destination_city": "Paris",
     "destination_country": "France",
