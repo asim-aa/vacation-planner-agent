@@ -2,8 +2,13 @@
 
 from agents.date_utils import add_days, next_occurrence_of_month
 from agents.llm_client import get_llm
+from agents.narrative_guard import mentions_unexpected_city
 from agents.state import TripState
 from tools.hotel_tool import search_hotels, select_hotel
+
+
+def _template_hotel_recommendation(hotel: dict) -> str:
+    return f"{hotel['HotelName']} in {hotel['cityName']}, ${hotel['EstimatedPriceUSD']:,.0f}/night."
 
 
 def build_hotel_output(results: list[dict], duration_days: int, optimize_for: str = "cheapest", llm=None) -> dict:
@@ -38,10 +43,16 @@ def build_hotel_output(results: list[dict], duration_days: int, optimize_for: st
         f"You are a travel planning assistant. This hotel (JSON) is {pick_description}. "
         "Write 1-2 sentences recommending it, mentioning its price and a couple of its "
         "amenities. Only use the data given, do not invent details, and do "
-        "not suggest a different hotel.\n\n"
+        "not suggest a different hotel or mention any other city.\n\n"
         f"{top_hotel}"
     )
     recommendation = llm.invoke(prompt).content
+
+    # Same defensive check as the flight agent -- don't trust the LLM's
+    # prose with place names any more than we trust it with the price.
+    allowed_names = {top_hotel.get("cityName"), *str(top_hotel.get("HotelName", "")).split()}
+    if mentions_unexpected_city(recommendation, allowed_names):
+        recommendation = _template_hotel_recommendation(top_hotel)
 
     nightly_price = top_hotel["EstimatedPriceUSD"]
 

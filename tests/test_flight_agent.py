@@ -133,6 +133,30 @@ def test_cost_estimate_is_cheapest_result_doubled(monkeypatch):
     assert result["flight_cost_estimate"] == 200.0  # cheapest (100.0) * 2
 
 
+def test_build_flight_output_discards_hallucinated_city_for_template(monkeypatch):
+    # Regression test for a real observed bug: the LLM once wrote
+    # "reaching Vancouver from San Jose" for a trip whose real
+    # destination was Guangzhou. FakeLLM here reproduces exactly that --
+    # a real city (Vancouver) unrelated to this flight's actual route.
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
+    llm = FakeLLM("This is a practical choice for reaching Vancouver from San Jose.")
+
+    result = build_flight_output(FAKE_RESULTS, seat_class="Economy", llm=llm)
+
+    assert "Vancouver" not in result["flight_recommendation"]
+    assert "Delta" in result["flight_recommendation"]
+    assert "$100" in result["flight_recommendation"]
+
+
+def test_build_flight_output_keeps_recommendation_without_hallucination(monkeypatch):
+    monkeypatch.setattr(flight_agent_module, "search_flights", lambda *a, **k: FAKE_RESULTS)
+    llm = FakeLLM("Delta offers a great economy fare from JFK to ATL.")
+
+    result = build_flight_output(FAKE_RESULTS, seat_class="Economy", llm=llm)
+
+    assert result["flight_recommendation"] == "Delta offers a great economy fare from JFK to ATL."
+
+
 def test_build_flight_output_comfort_mode_picks_fewer_stops_within_budget(monkeypatch):
     def fail_if_called(*a, **k):
         raise AssertionError("build_flight_output must not search again")

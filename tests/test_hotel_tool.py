@@ -17,6 +17,7 @@ import os
 
 import pytest
 
+import tools.hotel_tool as hotel_tool_module
 from tools.hotel_tool import search_hotels, select_hotel
 
 live_only = pytest.mark.skipif(
@@ -47,6 +48,34 @@ def test_select_hotel_quality_ignores_missing_ratings():
         {"HotelName": "Rated", "EstimatedPriceUSD": 90.0, "GuestRating": 4.0},
     ]
     assert select_hotel(results, optimize_for="quality")["HotelName"] == "Rated"
+
+
+class _FakeHotel:
+    name = "Test Hotel"
+    price = 100.0
+    rating = 4.5
+    amenities = []
+    url = "http://example.com"
+
+
+class _FakeHotelResult:
+    hotels = [_FakeHotel()]
+
+
+def test_search_hotels_caches_repeated_identical_calls(monkeypatch):
+    search_hotels.cache_clear()
+    calls = {"n": 0}
+
+    def fake_get_hotels(**kwargs):
+        calls["n"] += 1
+        return _FakeHotelResult()
+
+    monkeypatch.setattr(hotel_tool_module, "get_hotels", fake_get_hotels)
+
+    search_hotels("Paris", "2027-04-15", "2027-04-21", limit=5)
+    search_hotels("Paris", "2027-04-15", "2027-04-21", limit=5)
+
+    assert calls["n"] == 1
 
 
 @live_only

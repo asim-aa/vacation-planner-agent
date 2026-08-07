@@ -75,6 +75,46 @@ def test_get_baseline_price_empty_list_returns_none():
     assert get_baseline_price([]) is None
 
 
+class _FakeAirport:
+    def __init__(self, code):
+        self.code = code
+
+
+class _FakeDatetime:
+    date = (2027, 4, 15)
+    time = [10, 0]
+
+
+class _FakeLeg:
+    from_airport = _FakeAirport("JFK")
+    to_airport = _FakeAirport("ATL")
+    departure = _FakeDatetime()
+    arrival = _FakeDatetime()
+
+
+class _FakeFlight:
+    airlines = ["Delta"]
+    price = 100.0
+    flights = [_FakeLeg()]
+
+
+def test_search_flights_caches_repeated_identical_calls(monkeypatch):
+    search_flights.cache_clear()
+    calls = {"n": 0}
+
+    def fake_get_flights(query):
+        calls["n"] += 1
+        return [_FakeFlight()]
+
+    monkeypatch.setattr(flight_tool_module, "get_flights", fake_get_flights)
+    monkeypatch.setattr(flight_tool_module, "create_query", lambda **k: object())
+
+    search_flights("JFK", "ATL", "2027-04-15", limit=5)
+    search_flights("JFK", "ATL", "2027-04-15", limit=5)
+
+    assert calls["n"] == 1
+
+
 FLIGHTS_BY_PRICE = [
     {"Airline": "Budget Air", "Price_USD": 200.0, "Stops": 2},
     {"Airline": "Mid Air", "Price_USD": 350.0, "Stops": 1},

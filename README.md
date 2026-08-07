@@ -40,6 +40,9 @@ A few things worth calling out from building this against live, uncontrolled dat
 - **No silent failures.** Every live call (flight search, hotel search, geocoding, Overpass, weather) degrades to an empty result and a clear message instead of crashing the whole pipeline, with dedicated zero-result tests for every agent.
 - **Honest about data limitations, in the UI itself.** OpenStreetMap has no star ratings, real per-visit pricing, or popularity data — activity costs are a coarse fee-tag heuristic and "well-known" means "has a Wikipedia/Wikidata entry." Both are stated explicitly rather than presented as real numbers.
 - **Re-prioritize, don't re-search.** The chat refinement feature deliberately re-ranks results already fetched this run instead of hitting Google again — cheaper, faster, and avoids a live re-scrape silently returning a different result set than what's on screen.
+- **Don't trust the LLM's prose with facts either.** A flight recommendation once said "reaching Vancouver from San Jose" for a trip whose real destination was Guangzhou — nothing in the data mentioned Vancouver, it was invented. `agents/narrative_guard.py` checks every LLM-written recommendation against the real place names actually involved (looked up offline via `airportsdata`, not assumed) and silently swaps in a plain templated sentence if it finds one that doesn't belong.
+- **A short-TTL cache** (`tools/cache.py`) sits in front of every live search (flights, hotels, places+weather) so replanning or refining the same trip doesn't re-scrape from scratch — verified live: a repeated identical flight search dropped from 1.15s to 0.00s.
+- **The Streamlit UI itself is tested**, not just the backend — `tests/test_app.py` uses Streamlit's official `AppTest` framework to click the actual refine buttons and submit chat input in a simulated runtime, including a regression test for the exact "chat falsely claimed it changed something when nothing was left to switch to" bug found while testing live.
 
 ## Setup
 
@@ -67,7 +70,7 @@ python demo_orchestrator.py "Plan me a 6 day trip to Tokyo in October, budget $3
 ## Tests
 
 ```bash
-pytest                                       # 69 tests, fully offline (network calls mocked/gated)
+pytest                                       # 102 tests, fully offline (network calls mocked/gated)
 RUN_LIVE_FLIGHT_TESTS=1 pytest tests/test_flight_tool.py -v    # opt-in live network tests, per tool
 RUN_LIVE_HOTEL_TESTS=1 pytest tests/test_hotel_tool.py -v
 RUN_LIVE_PLACES_TESTS=1 pytest tests/test_spots_weather_tool.py -v

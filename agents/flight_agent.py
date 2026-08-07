@@ -2,6 +2,7 @@
 
 from agents.date_utils import next_occurrence_of_month
 from agents.llm_client import get_llm
+from agents.narrative_guard import city_for_airport_code, mentions_unexpected_city
 from agents.state import TripState
 from tools.flight_tool import (
     get_baseline_price,
@@ -17,6 +18,14 @@ from tools.flight_tool import (
 # resolver can't always tell which is the real hub. Capped so a genuinely
 # unserved route still fails in a bounded number of live searches.
 MAX_ROUTE_ATTEMPTS = 4
+
+
+def _template_flight_recommendation(flight: dict) -> str:
+    stop_word = "stop" if flight["Stops"] == 1 else "stops"
+    return (
+        f"{flight['Airline']} -- {flight['Departure_Airport']} to {flight['Arrival_Airport']}, "
+        f"${flight['Price_USD']:,.0f}, {flight['Stops']} {stop_word}, {flight['Seat_Class']}."
+    )
 
 
 def build_flight_output(
@@ -48,9 +57,26 @@ def build_flight_output(
         f"You are a travel planning assistant. This flight (JSON) is {pick_description}. "
         "Write 1-2 sentences recommending it. Only use the "
         "data given, do not invent details, and do not suggest a different "
-        f"flight.\n\n{top_flight}"
+        "flight. Do not mention any city, airport, or place name that isn't "
+        f"already in the data below.\n\n{top_flight}"
     )
     recommendation = llm.invoke(prompt).content
+
+    # Don't trust the LLM's prose with place names any more than we trust
+    # it with prices -- verified in practice: a flight recommendation
+    # once said "reaching Vancouver from San Jose" for a trip whose real
+    # destination was Guangzhou. Nothing in the data given to the LLM
+    # mentioned Vancouver; it was invented. If the narrative names a real
+    # city that isn't actually part of this flight, discard it for a
+    # plain templated sentence built straight from the pinned fields.
+    allowed_names = {
+        city_for_airport_code(top_flight.get("Departure_Airport")),
+        city_for_airport_code(top_flight.get("Arrival_Airport")),
+        city_for_airport_code(top_flight.get("SelfConnectedVia")),
+        top_flight.get("Airline"),
+    }
+    if mentions_unexpected_city(recommendation, allowed_names):
+        recommendation = _template_flight_recommendation(top_flight)
 
     # Don't rely on the LLM to notice and mention this on its own -- a
     # self-assembled connection is materially different (two separate

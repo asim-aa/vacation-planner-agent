@@ -1,8 +1,14 @@
 """Spots & Weather Agent: LangGraph node wrapping tools/spots_weather_tool.py (v2, real places)."""
 
 from agents.llm_client import get_llm
+from agents.narrative_guard import mentions_unexpected_city
 from agents.state import TripState
 from tools.spots_weather_tool import search_destinations
+
+
+def _template_spot_recommendation(top: list[dict]) -> str:
+    names = ", ".join(s["Destination Name"] for s in top)
+    return f"Top picks: {names}."
 
 
 def rank_spots(results: list[dict], optimize_for: str = "default") -> list[dict]:
@@ -62,11 +68,19 @@ def build_spot_output(results: list[dict], duration_days: int, optimize_for: str
         f"tourist attractions (JSON), {pick_framing}, recommend the "
         "top 2-3 spots -- prefer the first few in the list -- and explain "
         "why in a few sentences. Only use the data given, do not invent "
-        f"details.\n\n{ranked}"
+        f"details or mention any other place.\n\n{ranked}"
     )
     recommendation = llm.invoke(prompt).content
 
     top = ranked[:3]
+
+    # Same defensive check as the flight/hotel agents -- the recommendation
+    # may legitimately name any spot in the full ranked list, not just the
+    # top 3, so every spot's name contributes allowed words.
+    allowed_names = {word for spot in ranked for word in str(spot.get("Destination Name", "")).split()}
+    if mentions_unexpected_city(recommendation, allowed_names):
+        recommendation = _template_spot_recommendation(top)
+
     avg_daily_cost = sum(r["EstimatedCostUSD"] for r in top) / len(top)
 
     return {

@@ -52,6 +52,26 @@ def test_recommendation_prompt_only_describes_the_cheapest_hotel(monkeypatch):
     assert "Pricier Hotel" not in llm.prompts[0]
 
 
+def test_build_hotel_output_discards_hallucinated_city_for_template(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
+    llm = FakeLLM("A cozy stay near the beaches of Miami.")
+
+    result = build_hotel_output(FAKE_RESULTS, duration_days=4, llm=llm)
+
+    assert "Miami" not in result["hotel_recommendation"]
+    assert "Cheap Inn" in result["hotel_recommendation"]
+    assert "Paris" in result["hotel_recommendation"]
+
+
+def test_build_hotel_output_keeps_recommendation_without_hallucination(monkeypatch):
+    monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
+    llm = FakeLLM("Cheap Inn in Paris offers free Wi-Fi at a great price.")
+
+    result = build_hotel_output(FAKE_RESULTS, duration_days=4, llm=llm)
+
+    assert result["hotel_recommendation"] == "Cheap Inn in Paris offers free Wi-Fi at a great price."
+
+
 def test_optimize_for_quality_picks_better_rated_hotel_and_reorders_results(monkeypatch):
     monkeypatch.setattr(hotel_agent_module, "search_hotels", lambda *a, **k: FAKE_RESULTS)
     llm = RecordingFakeLLM("Great pick!")

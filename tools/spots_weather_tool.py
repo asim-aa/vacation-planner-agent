@@ -11,10 +11,12 @@ EstimatedCostUSD is a coarse fee-tag-based heuristic (see
 places_tool.py). This is real place data, not real pricing/rating data.
 """
 
+from tools.cache import ttl_cache
 from tools.places_tool import geocode_city, search_places_by_coords
 from tools.weather_tool import get_climate_suitability_for_coords
 
 
+@ttl_cache()
 def search_destinations(
     city: str,
     country: str | None = None,

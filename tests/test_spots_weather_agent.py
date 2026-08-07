@@ -76,6 +76,25 @@ NOTABLE_FAKE_RESULTS = [
 ]
 
 
+def test_build_spot_output_discards_hallucinated_city_for_template(monkeypatch):
+    monkeypatch.setattr(spots_weather_agent_module, "search_destinations", lambda *a, **k: list(FAKE_RESULTS))
+    llm = FakeLLM("These spots are a short walk from the beaches of Miami.")
+
+    result = build_spot_output(FAKE_RESULTS, duration_days=3, llm=llm)
+
+    assert "Miami" not in result["spot_recommendation"]
+    assert "Close Park" in result["spot_recommendation"]
+
+
+def test_build_spot_output_keeps_recommendation_without_hallucination(monkeypatch):
+    monkeypatch.setattr(spots_weather_agent_module, "search_destinations", lambda *a, **k: list(FAKE_RESULTS))
+    llm = FakeLLM("Close Park and Mid Gallery are both close to the center and free or cheap.")
+
+    result = build_spot_output(FAKE_RESULTS, duration_days=3, llm=llm)
+
+    assert result["spot_recommendation"] == "Close Park and Mid Gallery are both close to the center and free or cheap."
+
+
 def test_rank_spots_notable_mode_is_pure_no_llm_needed():
     # app.py uses this directly (no build_spot_output/LLM call) to preview
     # whether a "notable" re-rank would actually change anything.

@@ -17,6 +17,7 @@ import airportsdata
 
 import tools._fast_flights_patch  # noqa: F401 -- applies a parser bugfix as an import side effect
 from fast_flights import FlightQuery, Passengers, create_query, get_flights
+from tools.cache import ttl_cache
 
 # Seen in practice (same class of issue as tools/hotel_tool.py): a live
 # scrape can transiently return zero results even though the exact same
@@ -102,6 +103,7 @@ def _format_datetime(dt) -> str:
     return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}"
 
 
+@ttl_cache()
 def search_flights(
     origin: str,
     destination: str,

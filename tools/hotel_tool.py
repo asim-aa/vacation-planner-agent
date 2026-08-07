@@ -12,6 +12,7 @@ import time
 
 from fast_hotels import get_hotels
 from fast_hotels.hotels_impl import Guests, HotelData
+from tools.cache import ttl_cache
 
 # Seen in practice: a query can transiently return zero results (or fail)
 # even though the exact same query succeeds on an immediate retry -- this
@@ -29,6 +30,7 @@ RETRY_DELAY_SECONDS = 2
 MIN_PLAUSIBLE_NIGHTLY_PRICE = 10.0
 
 
+@ttl_cache()
 def search_hotels(
     city: str,
     checkin_date: str,

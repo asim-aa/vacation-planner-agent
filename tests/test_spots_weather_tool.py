@@ -11,12 +11,30 @@ import os
 
 import pytest
 
+import tools.spots_weather_tool as spots_weather_tool_module
 from tools.spots_weather_tool import search_destinations
 
 live_only = pytest.mark.skipif(
     os.environ.get("RUN_LIVE_PLACES_TESTS") != "1",
     reason="live network call (Nominatim + Overpass) -- set RUN_LIVE_PLACES_TESTS=1 to run",
 )
+
+
+def test_search_destinations_caches_repeated_identical_calls(monkeypatch):
+    search_destinations.cache_clear()
+    calls = {"n": 0}
+
+    def fake_geocode(city, country=None):
+        calls["n"] += 1
+        return (48.8566, 2.3522)
+
+    monkeypatch.setattr(spots_weather_tool_module, "geocode_city", fake_geocode)
+    monkeypatch.setattr(spots_weather_tool_module, "search_places_by_coords", lambda *a, **k: [])
+
+    search_destinations("Paris", "France", limit=5)
+    search_destinations("Paris", "France", limit=5)
+
+    assert calls["n"] == 1
 
 
 @live_only
