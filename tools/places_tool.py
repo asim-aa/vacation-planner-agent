@@ -114,11 +114,18 @@ def search_places_by_coords(lat: float, lon: float, radius_km: float = 8.0, limi
         el_lat, el_lon = el.get("lat"), el.get("lon")
         distance_km = round(_haversine_km(lat, lon, el_lat, el_lon), 2) if el_lat and el_lon else None
 
+        # OSM has no popularity/rating field at all, but a place tagged with
+        # a wikipedia/wikidata entry has cleared Wikipedia's own notability
+        # bar -- a real (if imperfect) signal for "well-known landmark" vs.
+        # an untagged local spot, not a fabricated popularity score.
+        is_notable = bool(tags.get("wikipedia") or tags.get("wikidata"))
+
         results.append({
             "Destination Name": name,
             "Type": tags.get("tourism", "attraction").replace("_", " ").title(),
             "EstimatedCostUSD": estimated_cost,
             "DistanceFromCenterKm": distance_km,
+            "Notable": is_notable,
         })
 
     results.sort(key=lambda r: (r["DistanceFromCenterKm"] is None, r["DistanceFromCenterKm"]))

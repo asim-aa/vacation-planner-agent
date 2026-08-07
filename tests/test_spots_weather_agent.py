@@ -7,7 +7,7 @@ logic is verified without any network call.
 """
 
 import agents.spots_weather_agent as spots_weather_agent_module
-from agents.spots_weather_agent import spots_weather_agent_node
+from agents.spots_weather_agent import build_spot_output, rank_spots, spots_weather_agent_node
 from tests.fake_llm import FakeLLM, RecordingFakeLLM
 
 FAKE_RESULTS = [
@@ -64,3 +64,42 @@ def test_recommendation_prompt_receives_ranked_list(monkeypatch):
 
     assert len(llm.prompts) == 1
     assert "Close Park" in llm.prompts[0]
+
+
+NOTABLE_FAKE_RESULTS = [
+    {"Destination Name": "Obscure Plaza", "Type": "Attraction", "EstimatedCostUSD": 0.0,
+     "DistanceFromCenterKm": 0.2, "season_match": True, "Notable": False},
+    {"Destination Name": "Famous Landmark", "Type": "Museum", "EstimatedCostUSD": 15.0,
+     "DistanceFromCenterKm": 1.5, "season_match": True, "Notable": True},
+    {"Destination Name": "Off-Season Icon", "Type": "Museum", "EstimatedCostUSD": 15.0,
+     "DistanceFromCenterKm": 0.1, "season_match": False, "Notable": True},
+]
+
+
+def test_rank_spots_notable_mode_is_pure_no_llm_needed():
+    # app.py uses this directly (no build_spot_output/LLM call) to preview
+    # whether a "notable" re-rank would actually change anything.
+    ranked = rank_spots(NOTABLE_FAKE_RESULTS, optimize_for="notable")
+    assert [s["Destination Name"] for s in ranked] == ["Famous Landmark", "Obscure Plaza", "Off-Season Icon"]
+
+
+def test_build_spot_output_notable_mode_prefers_wikipedia_tagged_spots_within_season_tier():
+    result = build_spot_output(NOTABLE_FAKE_RESULTS, duration_days=5, optimize_for="notable", llm=FakeLLM())
+
+    names = [s["Destination Name"] for s in result["spot_results"]]
+    # Famous Landmark (notable, season-matched) beats Obscure Plaza (not
+    # notable, season-matched) despite being farther from the center --
+    # but Off-Season Icon still loses to both since season-match still
+    # outranks notability, it's just the tie-break within a tier.
+    assert names == ["Famous Landmark", "Obscure Plaza", "Off-Season Icon"]
+
+
+def test_build_spot_output_does_not_search_again(monkeypatch):
+    def fail_if_called(*a, **k):
+        raise AssertionError("build_spot_output must not search again")
+
+    monkeypatch.setattr(spots_weather_agent_module, "search_destinations", fail_if_called)
+
+    result = build_spot_output(list(FAKE_RESULTS), duration_days=3, optimize_for="notable", llm=FakeLLM())
+
+    assert result["spot_results"]

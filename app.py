@@ -15,8 +15,10 @@ import streamlit as st
 
 from agents.compile_itinerary import compile_itinerary_node
 from agents.flight_agent import build_flight_output
+from agents.followup_router import classify_followup
 from agents.graph import plan_trip
 from agents.hotel_agent import build_hotel_output
+from agents.spots_weather_agent import build_spot_output, rank_spots
 from tools.flight_tool import select_flight
 
 st.set_page_config(page_title="Vacation Planner", page_icon="🧳", layout="wide")
@@ -38,8 +40,11 @@ with st.expander("ℹ️ Coverage notes"):
         "real city works, with real nightly prices.\n"
         "- 🎡 **Activity spots** are real, named places (OpenStreetMap via "
         "Nominatim + Overpass) -- any real city works. Prices are a "
-        "coarse fee-tag heuristic, not real cost data; there are no star "
-        "ratings, so spots are ranked by distance from the city center.\n"
+        "coarse fee-tag heuristic, not real cost data. OSM has no star "
+        "ratings or popularity data, so spots are ranked by distance from "
+        "the city center; \"well-known\" means the place has a real "
+        "Wikipedia/Wikidata entry, which is a proxy for fame, not a "
+        "popularity score.\n"
         "- 🌤️ **Weather/season fit** is live real historical climate data "
         "(Open-Meteo), checked at the actual destination city's real "
         "coordinates."
@@ -66,6 +71,7 @@ if go:
             try:
                 st.session_state["trip_state"] = plan_trip(user_request)
                 st.session_state["trip_error"] = None
+                st.session_state["chat_history"] = []
             except Exception as e:
                 st.session_state["trip_error"] = str(e)
                 st.session_state["trip_state"] = None
@@ -208,6 +214,19 @@ def render_lodging(state: dict) -> None:
             st.dataframe(df, hide_index=True, width="stretch")
 
 
+def refine_activities_for_notability(state: dict) -> dict:
+    """Re-rank activities to prefer well-known spots (real Wikipedia/
+    Wikidata entries -- see tools/places_tool.py's "Notable" field) within
+    each season-match tier, from the SAME candidates already fetched this
+    run. Unlike the hotel/flight upgrades this isn't a $-budget lever --
+    OSM has no popularity or price data worth "spending more" on, so this
+    re-ranks for well-known-ness instead."""
+    spot_output = build_spot_output(state.get("spot_results", []), state.get("duration_days", 5), optimize_for="notable")
+    updated_state = {**state, **spot_output}
+    updated_state.update(compile_itinerary_node(updated_state))
+    return updated_state
+
+
 def render_activities(state: dict) -> None:
     spots = state.get("spot_results", [])
     if not spots:
@@ -241,6 +260,16 @@ def render_activities(state: dict) -> None:
                     st.badge("Great season fit", icon="🌤️", color="green")
                 elif spot.get("season_match") is False:
                     st.badge("Off-season", icon="🌧️", color="gray")
+                if spot.get("Notable"):
+                    st.badge("Well-known (Wikipedia)", icon="📖", color="blue")
+
+    notable_top = rank_spots(spots, optimize_for="notable")[:3]
+    if [s["Destination Name"] for s in notable_top] != [s["Destination Name"] for s in top]:
+        st.caption("💡 Some more well-known spots (with a real Wikipedia/Wikidata entry) are further down the list.")
+        if st.button("🌟 Prefer well-known landmarks instead"):
+            with st.spinner("Re-ranking for well-known spots..."):
+                st.session_state["trip_state"] = refine_activities_for_notability(state)
+            st.rerun()
 
     if len(spots) > 3:
         with st.expander(f"See {len(spots) - 3} more nearby attractions"):
@@ -356,7 +385,75 @@ def render_itinerary(state: dict) -> None:
     )
 
 
+def _describe_hotel_pick(state: dict) -> str:
+    hotels = state.get("hotel_results", [])
+    if not hotels:
+        return "no hotel data available."
+    h = hotels[0]
+    return f"switched to **{h['HotelName']}** ({_money(h['EstimatedPriceUSD'])}/night)."
+
+
+def _describe_flight_pick(state: dict) -> str:
+    flights = state.get("flight_results", [])
+    if not flights:
+        return "no flight data available."
+    f = flights[0]
+    stop_word = "stop" if f["Stops"] == 1 else "stops"
+    return f"switched to **{f['Airline']}** ({_money(f['Price_USD'])}, {f['Stops']} {stop_word})."
+
+
+def _describe_activities_pick(state: dict) -> str:
+    spots = state.get("spot_results", [])
+    if not spots:
+        return "no activity data available."
+    names = ", ".join(s["Destination Name"] for s in spots[:3])
+    return f"top picks are now: {names}."
+
+
+# category -> (refine function, description of what changed)
+REFINE_HANDLERS = {
+    "hotel": (refine_hotel_for_quality, _describe_hotel_pick),
+    "flight": (refine_flight_for_comfort, _describe_flight_pick),
+    "activities": (refine_activities_for_notability, _describe_activities_pick),
+}
+
+UNCLEAR_REPLY = (
+    "I can currently help with three things: a better-rated hotel, a more direct "
+    "flight, or more well-known activities -- try mentioning one of those."
+)
+
+
+def render_chat() -> None:
+    st.divider()
+    st.markdown("#### 💬 Ask for a refinement")
+    st.caption(
+        'Try: "spend the rest on a nicer hotel", "get me a more direct flight", '
+        'or "show me more well-known activities".'
+    )
+
+    for msg in st.session_state.get("chat_history", []):
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    if followup := st.chat_input("Type a refinement request..."):
+        st.session_state.setdefault("chat_history", []).append({"role": "user", "content": followup})
+
+        category = classify_followup(followup)
+        handler = REFINE_HANDLERS.get(category)
+        if handler:
+            refine_fn, describe_fn = handler
+            with st.spinner("Applying..."):
+                st.session_state["trip_state"] = refine_fn(st.session_state["trip_state"])
+            reply = f"Done — {describe_fn(st.session_state['trip_state'])}"
+        else:
+            reply = UNCLEAR_REPLY
+
+        st.session_state["chat_history"].append({"role": "assistant", "content": reply})
+        st.rerun()
+
+
 if st.session_state.get("trip_error"):
     st.error(f"Something went wrong: {st.session_state['trip_error']}")
 elif st.session_state.get("trip_state"):
     render_itinerary(st.session_state["trip_state"])
+    render_chat()
