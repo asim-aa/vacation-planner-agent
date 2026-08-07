@@ -24,13 +24,13 @@ with st.expander("Coverage notes"):
         "real origin/destination city works, no fixed airport list.\n"
         "- **Hotels** are live (Google Hotels via `fast-hotels`) -- any "
         "real city works, with real nightly prices.\n"
+        "- **Activity spots** are real, named places (OpenStreetMap via "
+        "Nominatim + Overpass) -- any real city works. Prices are a "
+        "coarse fee-tag heuristic, not real cost data; there are no star "
+        "ratings, so spots are ranked by distance from the city center.\n"
         "- **Weather/season fit** is live real historical climate data "
-        "(Open-Meteo), checked against one representative city per "
-        "country.\n"
-        "- **The activity spots themselves** (e.g. \"Lush Ruins\") are "
-        "still mock data from the original Kaggle dataset -- generic "
-        "template names, not real places -- covering 22 countries. Only "
-        "the weather-suitability check on top of them is real."
+        "(Open-Meteo), checked at the actual destination city's real "
+        "coordinates."
     )
 
 default_example = (
