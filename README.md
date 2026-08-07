@@ -67,6 +67,22 @@ Or from the command line, for one itinerary at a time:
 python demo_orchestrator.py "Plan me a 6 day trip to Tokyo in October, budget $3000, flying from Chicago"
 ```
 
+## Deploy it
+
+The app itself needs zero code changes to deploy -- the only local-machine dependency is the LLM endpoint (Option A above points at `localhost`). Swap it for a hosted one first:
+
+1. Get a free API key at [console.groq.com](https://console.groq.com) (no credit card required; rate-limited, not unlimited). Groq hosts the exact same `openai/gpt-oss-20b` model this project already uses, so nothing else changes.
+2. Test it locally first: put the Option B values from `.env.example` into your real `.env` and confirm `streamlit run app.py` still works end to end.
+3. Push to GitHub, then deploy on [share.streamlit.io](https://share.streamlit.io) (sign in with GitHub, "New app", pick this repo/branch, main file `app.py`).
+4. In the deploy dialog's "Advanced settings," paste your Groq values as secrets (TOML format):
+   ```toml
+   LLM_BASE_URL = "https://api.groq.com/openai/v1"
+   LLM_API_KEY = "your_groq_api_key_here"
+   LLM_MODEL = "openai/gpt-oss-20b"
+   LLM_TIMEOUT_SECONDS = "120"
+   ```
+   Root-level secrets like these are automatically exposed as environment variables, so `agents/llm_client.py`'s existing `os.environ[...]` reads pick them up with no code changes.
+
 ## Tests
 
 ```bash
