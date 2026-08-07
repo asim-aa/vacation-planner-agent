@@ -67,13 +67,17 @@ def resolve_airport(code: str) -> dict | None:
     if code in KNOWN_AIRPORTS:
         return KNOWN_AIRPORTS[code]
 
-    resp = requests.get(
-        f"{BASE_URL}/v1/flights/searchAirport",
-        params={"query": code, "locale": "en-US"},
-        headers=_headers(),
-        timeout=20,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/v1/flights/searchAirport",
+            params={"query": code, "locale": "en-US"},
+            headers=_headers(),
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.exceptions.RequestException:
+        return None
+
     for item in resp.json().get("data", []):
         params = item.get("navigation", {}).get("relevantFlightParams", {})
         if params.get("skyId") == code and item["navigation"]["entityType"] == "AIRPORT":
@@ -89,13 +93,17 @@ def resolve_city_to_airport(city_name: str) -> dict | None:
     this project originally hardcoded. Costs 1 live API request; never
     cached, since arbitrary destinations vary per trip.
     """
-    resp = requests.get(
-        f"{BASE_URL}/v1/flights/searchAirport",
-        params={"query": city_name.strip(), "locale": "en-US"},
-        headers=_headers(),
-        timeout=20,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/v1/flights/searchAirport",
+            params={"query": city_name.strip(), "locale": "en-US"},
+            headers=_headers(),
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.exceptions.RequestException:
+        return None
+
     for item in resp.json().get("data", []):
         nav = item.get("navigation", {})
         if nav.get("entityType") != "AIRPORT":
