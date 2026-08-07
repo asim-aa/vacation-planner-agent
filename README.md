@@ -6,6 +6,12 @@ Every data source is live and free. **No API keys required anywhere in the syste
 
 ![Tests](https://github.com/asim-aa/vacation-planner-agent/actions/workflows/tests.yml/badge.svg)
 
+*Demo video coming soon.*
+
+## From mock data to live data
+
+This was built in two deliberate phases. **v1** proved the multi-agent architecture end-to-end against local mock datasets (Kaggle CSVs loaded into SQLite) — so the LangGraph orchestration, parallel fan-out/fan-in, budget math, and itinerary compilation could be validated in isolation before taking on the complexity of real, uncontrolled APIs. Once that pipeline worked with a full test suite behind it, **v2** replaced every single mock data source with something live, one at a time: flights (started on a rate-limited RapidAPI plan, then rebuilt on the keyless `fast-flights` after hitting its quota), hotels (`fast-hotels`), destinations (OpenStreetMap), and climate (Open-Meteo) — landing on zero API keys required anywhere in the final system.
+
 ## What it does
 
 - **Flights** — live Google Flights results via [`fast-flights`](https://github.com/AWeirdDev/flights). Airport resolution is fully offline (`airportsdata`) and handles ambiguous multi-airport metros (e.g. Jakarta's CGK vs HLP) by trying ranked candidates instead of guessing once. When Google's own engine can't build any itinerary at all for a route (e.g. a small regional origin to a distant city), it falls back to self-assembling a connection through a major hub and clearly labels it as a two-ticket, self-connected itinerary rather than presenting it as a normal booking.
