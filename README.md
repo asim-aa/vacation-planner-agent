@@ -6,6 +6,8 @@ Every data source is live and free. **No API keys required anywhere in the syste
 
 ![Tests](https://github.com/asim-aa/vacation-planner-agent/actions/workflows/tests.yml/badge.svg)
 
+**🔗 [Try it live](https://vacation-planner-agent-hybzvttaeapp48zwno5wshm.streamlit.app/)** — no install needed, plan a real trip in the browser.
+
 *Demo video coming soon.*
 
 ## From mock data to live data
