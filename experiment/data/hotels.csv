@@ -1,0 +1,31 @@
+Hotel_ID,City,Hotel_Name,Hotel_Tier,Hotel_Price
+HT1001,BOS,Boston Budget Inn,cheap,90
+HT1002,BOS,Boston Plaza Hotel,mid,166
+HT1003,BOS,Boston Grand Resort & Spa,expensive,292
+HT1004,DEN,Denver Budget Inn,cheap,85
+HT1005,DEN,Denver Plaza Hotel,mid,157
+HT1006,DEN,Denver Grand Resort & Spa,expensive,276
+HT1007,DFW,Dallas Budget Inn,cheap,80
+HT1008,DFW,Dallas Plaza Hotel,mid,148
+HT1009,DFW,Dallas Grand Resort & Spa,expensive,260
+HT1010,JFK,New York Budget Inn,cheap,140
+HT1011,JFK,New York Plaza Hotel,mid,259
+HT1012,JFK,New York Grand Resort & Spa,expensive,455
+HT1013,LAX,Los Angeles Budget Inn,cheap,130
+HT1014,LAX,Los Angeles Plaza Hotel,mid,240
+HT1015,LAX,Los Angeles Grand Resort & Spa,expensive,422
+HT1016,MCO,Orlando Budget Inn,cheap,95
+HT1017,MCO,Orlando Plaza Hotel,mid,176
+HT1018,MCO,Orlando Grand Resort & Spa,expensive,309
+HT1019,MIA,Miami Budget Inn,cheap,120
+HT1020,MIA,Miami Plaza Hotel,mid,222
+HT1021,MIA,Miami Grand Resort & Spa,expensive,390
+HT1022,ORD,Chicago Budget Inn,cheap,100
+HT1023,ORD,Chicago Plaza Hotel,mid,185
+HT1024,ORD,Chicago Grand Resort & Spa,expensive,325
+HT1025,PHX,Phoenix Budget Inn,cheap,75
+HT1026,PHX,Phoenix Plaza Hotel,mid,139
+HT1027,PHX,Phoenix Grand Resort & Spa,expensive,244
+HT1028,SFO,San Francisco Budget Inn,cheap,150
+HT1029,SFO,San Francisco Plaza Hotel,mid,278
+HT1030,SFO,San Francisco Grand Resort & Spa,expensive,488

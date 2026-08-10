@@ -98,13 +98,20 @@ def parse_flight_request(user_request: str, llm=None) -> dict:
     }
 
 
-def search_flights_in_csv(origin: str, destination: str, max_budget: float, df: pd.DataFrame | None = None) -> dict:
+def search_flights_in_csv(
+    origin: str, destination: str, max_budget: float | None, df: pd.DataFrame | None = None
+) -> dict:
     """Deterministic search -- no model involved. Returns one of three shapes:
 
     - route doesn't exist in the data at all: {"status": "no_route", ...}
     - route exists but nothing fits the budget: {"status": "over_budget",
       "shortfall": how much more you'd need, "cheapest": the closest option}
     - one or more real, non-cancelled flights fit: {"status": "found", "flights": [...]}
+
+    `max_budget=None` means unfiltered -- return every real flight,
+    cheapest first, with no affordability check (used when a caller just
+    wants the real cheapest flight regardless of budget, e.g. as one leg
+    of a combined flight+hotel calculation done elsewhere).
     """
     if df is None:
         df = pd.read_csv(DATA_PATH)
@@ -121,7 +128,8 @@ def search_flights_in_csv(origin: str, destination: str, max_budget: float, df: 
             "destination": destination,
         }
 
-    affordable = real[real["Price_USD"] <= max_budget].sort_values("Price_USD")
+    affordable = real if max_budget is None else real[real["Price_USD"] <= max_budget]
+    affordable = affordable.sort_values("Price_USD")
 
     if affordable.empty:
         cheapest = real.sort_values("Price_USD").iloc[0]
