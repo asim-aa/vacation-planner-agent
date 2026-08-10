@@ -174,3 +174,6 @@ Same swallowed-budget failure → same result: model asks instead of guessing.
 python3 experiment/run_tool_calling_experiment.py "flying from Boston to Miami, budget $100"
 ```
 Same failure. Worth comparing directly against the deterministic version's identical broken command above — both refuse, but this one refuses because the *model itself* chose not to pass a budget it didn't have, rather than code checking for `None` after the fact.
+
+
+![alt text](image.png)
