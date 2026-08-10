@@ -55,9 +55,29 @@ Every real, non-cancelled route in the dataset (161 of 188 total rows are non-ca
 
 **Total real routes:** 48  |  **Total non-cancelled flights:** 161  |  **Cancelled (excluded):** 27
 
+## Two ways this experiment answers a request
+
+There are two separate scripts, both searching the same real CSV, that get there completely differently. Same underlying data and same defensive rule (never invent a missing budget) — different architecture for how the model is involved.
+
+| | `run_experiment.py` (deterministic extraction) | `run_tool_calling_experiment.py` (real tool calling) |
+|---|---|---|
+| What the model is given | The user's prompt **plus a hand-written JSON schema spelled out in the prompt text** (field names, types, the 10 valid airport codes) | The user's prompt **plus a formal tool definition** (`search_flights`, with typed parameters) — no schema text, no CSV |
+| How structured data comes out | Model is told to reply with JSON; code regex-extracts and `json.loads`s it | Model emits a real, structured **tool call** (`response.tool_calls`) — no text-parsing involved |
+| Who decides to search | Always searches — the code calls the search function unconditionally, every time | The **model decides** whether to call the tool at all (in principle it could decline) |
+| Who touches the CSV | A separate, plain Python/pandas function — the model never sees a single row of real data | Same underlying function, called by "the tool owner" (our code) — same guarantee: the model never sees raw CSV rows either, only the tool's return value |
+| Who writes the final answer | **Code** — a fixed `print()` template built from the raw result dict | **The model** — it receives the real tool result and writes a natural-language answer in its own words |
+| Number of model calls | 1 | 2 (one to decide/call the tool, one to read the result and answer) |
+| Missing-budget handling | Code checks for `None` before searching, refuses with a fixed message | Budget is an *optional* tool parameter; if omitted, the tool returns a "no budget stated" result and the model asks the user itself, in its own words |
+
+**In short:** the deterministic version is cheaper (one call) and its output is 100% predictable, since code — not the model — formats the answer. The tool-calling version costs a second call but produces a more natural response, and gives the model real agency over *whether* to search, not just *how*. Both are equally safe against inventing data, because in both cases the actual CSV search is deterministic code the model never sees inside of — the only real difference is who's allowed to touch the final wording, the schema mechanism used, and the number of model round-trips.
+
 ## Example commands (run from `vacation-planner-agent-experiment/`, venv already active)
 
-### ✅ 5 that work
+Same 8 prompts run through both scripts below, so you can directly compare how each architecture handles the identical request.
+
+### `run_experiment.py` — deterministic extraction
+
+#### ✅ 5 that work
 
 All single-quoted, so the shell doesn't touch the `$`. Each demonstrates a different real outcome — found, over-budget, and no-route are all "working correctly," not failures.
 
@@ -86,14 +106,14 @@ python3 experiment/run_experiment.py 'flying from Chicago to Boston, budget $300
 ```
 Correctly reports no route exists — ORD → BOS isn't in this dataset at all (check the table above; it's genuinely missing, not a bug).
 
-### ❌ 3 that don't work
+#### ❌ 3 that don't work
 
-All double-quoted with an unescaped `$` — bash/zsh still expands `$` inside double quotes, so the budget silently never reaches the script. The tool used to guess a $500 default when this happened (and that guess could quietly flip a real "not possible" into a wrong "found" — see below); it no longer guesses. Now every one of these refuses to search at all and tells you no budget was found, rather than searching against a number you never typed.
+All double-quoted with an unescaped `$` — bash/zsh still expands `$` inside double quotes, so the budget silently never reaches the script. Refuses to search and tells you no budget was found, rather than guessing one (an earlier version guessed $500, which could silently flip a real "not possible" into a wrong "found" — that's fixed now).
 
 ```bash
 python3 experiment/run_experiment.py "flying from Boston to Phoenix, budget $200"
 ```
-Budget swallowed → refuses to search, tells you no budget was found.
+Budget swallowed → refuses to search.
 
 ```bash
 python3 experiment/run_experiment.py "flying from Dallas to Los Angeles, budget $150"
@@ -103,4 +123,54 @@ Same swallowed-budget failure → same refusal.
 ```bash
 python3 experiment/run_experiment.py "flying from Boston to Miami, budget $100"
 ```
-Same failure again — but this is the one that used to matter most: the correct (single-quoted) version of this exact request says "not possible, $23.86 short," and the old $500-default behavior silently flipped that into a wrong "✅ found," since $500 covers the $123.86 flight. That's exactly the bug that motivated removing the default — a swallowed budget shouldn't just risk a warning, it shouldn't be able to change the answer. Now it just refuses instead.
+Same failure — this is the prompt where a wrong guess used to matter most (see the comparison table's note on the old $500 default). Now it just refuses.
+
+### `run_tool_calling_experiment.py` — real tool calling
+
+#### ✅ 5 that work
+
+Same prompts, same quoting rule. Watch step (4) — the final answer is the model's own wording built from the real tool result, not a fixed template, so phrasing will vary slightly between runs even though the underlying data is identical.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py 'flying from Boston to Phoenix, budget $200'
+```
+Model calls `search_flights(origin_airport='BOS', destination_airport='PHX', max_budget=200)`, gets 6 real flights back, writes its own summary (verified: it produced a full markdown table of all 6, correct prices).
+
+```bash
+python3 experiment/run_tool_calling_experiment.py 'flying from Boston to Miami, budget $100'
+```
+Tool returns `status: over_budget`, `shortfall: 23.86` — model explains the shortfall in its own words.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py 'flying from Dallas to Los Angeles, budget $150'
+```
+Finds the same 4 real flights as the deterministic version, cheapest $96.01.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py 'flying from Los Angeles to Orlando, budget $40'
+```
+Tool returns `status: over_budget`, `shortfall: 10.77` — same real numbers, phrased by the model.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py 'flying from Chicago to Boston, budget $300'
+```
+Tool returns `status: no_route` — model correctly says it couldn't find any flights, does not invent one.
+
+#### ❌ 3 that don't work
+
+Same shell-quoting failure, different mechanism: the budget text is swallowed before the model ever sees it, so the model calls the tool **without** the `max_budget` argument at all (verified: `search_flights({'destination_airport': 'MIA', 'origin_airport': 'BOS'})`, no budget key present). The tool refuses to guess and tells the model to ask; the model then asks you for a budget in its own words instead of assuming one.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py "flying from Boston to Phoenix, budget $200"
+```
+Budget swallowed → model omits `max_budget` from the tool call → model asks you for a budget.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py "flying from Dallas to Los Angeles, budget $150"
+```
+Same swallowed-budget failure → same result: model asks instead of guessing.
+
+```bash
+python3 experiment/run_tool_calling_experiment.py "flying from Boston to Miami, budget $100"
+```
+Same failure. Worth comparing directly against the deterministic version's identical broken command above — both refuse, but this one refuses because the *model itself* chose not to pass a budget it didn't have, rather than code checking for `None` after the fact.
