@@ -18,6 +18,12 @@ from agents.flight_agent import build_flight_output
 from agents.followup_router import classify_followup
 from agents.graph import plan_trip
 from agents.hotel_agent import build_hotel_output
+from agents.rate_limit import (
+    RateLimitError,
+    build_session_quotas,
+    global_quotas,
+    rate_limiting_enabled,
+)
 from agents.spots_weather_agent import build_spot_output, rank_spots
 from tools.flight_tool import select_flight
 
@@ -61,12 +67,73 @@ user_request = st.text_area(
     height=100,
 )
 
+
+def _session_quotas():
+    """Per-visitor quotas, created once per Streamlit session."""
+    if "rate_limit_quotas" not in st.session_state:
+        st.session_state["rate_limit_quotas"] = build_session_quotas()
+    return st.session_state["rate_limit_quotas"]
+
+
+def _try_quota(*scopes: str, action: str = "request") -> bool:
+    """Charge the named quotas. Returns False if refused. Renders nothing.
+
+    Every caller guards an action that fans out into LLM calls and live scrapes,
+    so this is the single choke point where public traffic is bounded.
+    """
+    st.session_state.pop("rate_limit_message", None)
+    if not rate_limiting_enabled():
+        return True
+
+    global_scopes = [s for s in scopes if s.startswith("global")]
+    session_scopes = [s for s in scopes if not s.startswith("global")]
+
+    try:
+        # Global first: a burst from other visitors should not consume this
+        # visitor's session allowance. Each QuotaSet.acquire is internally
+        # all-or-nothing, and we unwind the global charge by hand if the
+        # session set then refuses, so the pair stays atomic too.
+        global_quotas().acquire(global_scopes, action=action)
+        try:
+            _session_quotas().acquire(session_scopes, action=action)
+        except RateLimitError:
+            for scope in global_scopes:
+                if scope in global_quotas():
+                    global_quotas().refund(scope)
+            raise
+    except RateLimitError as exc:
+        st.session_state["rate_limit_message"] = str(exc)
+        return False
+    return True
+
+
+def acquire_quota(*scopes: str, action: str = "request") -> bool:
+    """`_try_quota`, surfacing any refusal as an inline error."""
+    if _try_quota(*scopes, action=action):
+        return True
+    st.error(f"⏳ {st.session_state.get('rate_limit_message', 'Rate limit reached.')}")
+    return False
+
+
+def render_quota_notice() -> None:
+    """Tell the visitor what's left, but only once it's worth knowing."""
+    if not rate_limiting_enabled():
+        return
+    left = _session_quotas().remaining("session_plans")
+    if left <= 3:
+        st.caption(
+            f"🔒 Demo limit: {left} trip plan{'s' if left != 1 else ''} left this "
+            "session. Reload the page to start a new one."
+        )
+
+
 go = st.button("✈️ Plan my trip", type="primary")
+render_quota_notice()
 
 if go:
     if not user_request.strip():
         st.warning("Enter a trip request first.")
-    else:
+    elif acquire_quota("global_plans", "session_plans", action="trip plan"):
         with st.spinner("Running the Hotel, Flight, and Spots & Weather agents..."):
             try:
                 st.session_state["trip_state"] = plan_trip(user_request)
@@ -142,7 +209,9 @@ def render_flights(state: dict) -> None:
     if comfort_pick["Stops"] < top["Stops"]:
         headroom = max_one_way - top["Price_USD"]
         st.caption(f"💡 You have up to {_money(headroom)} more per one-way ticket to spend on fewer stops.")
-        if st.button("💎 Spend it on a more direct flight instead"):
+        if st.button("💎 Spend it on a more direct flight instead") and acquire_quota(
+            "session_refinements", action="refinement"
+        ):
             with st.spinner("Re-picking your flight for comfort..."):
                 st.session_state["trip_state"] = refine_flight_for_comfort(state)
             st.rerun()
@@ -196,7 +265,9 @@ def render_lodging(state: dict) -> None:
     headroom = max_nightly - top["EstimatedPriceUSD"] if max_nightly else 0
     if headroom > 1:
         st.caption(f"💡 You have up to {_money(headroom)}/night of budget headroom left unused.")
-        if st.button("💎 Spend it on a better-rated hotel instead"):
+        if st.button("💎 Spend it on a better-rated hotel instead") and acquire_quota(
+            "session_refinements", action="refinement"
+        ):
             with st.spinner("Re-picking your hotel for quality..."):
                 st.session_state["trip_state"] = refine_hotel_for_quality(state)
             st.rerun()
@@ -266,7 +337,9 @@ def render_activities(state: dict) -> None:
     notable_top = rank_spots(spots, optimize_for="notable")[:3]
     if [s["Destination Name"] for s in notable_top] != [s["Destination Name"] for s in top]:
         st.caption("💡 Some more well-known spots (with a real Wikipedia/Wikidata entry) are further down the list.")
-        if st.button("🌟 Prefer well-known landmarks instead"):
+        if st.button("🌟 Prefer well-known landmarks instead") and acquire_quota(
+            "session_refinements", action="refinement"
+        ):
             with st.spinner("Re-ranking for well-known spots..."):
                 st.session_state["trip_state"] = refine_activities_for_notability(state)
             st.rerun()
@@ -467,20 +540,30 @@ def render_chat() -> None:
     if followup := st.chat_input("Type a refinement request..."):
         st.session_state.setdefault("chat_history", []).append({"role": "user", "content": followup})
 
-        category = classify_followup(followup)
-        handler = REFINE_HANDLERS.get(category)
-        if handler:
-            refine_fn, describe_fn, signature_fn = handler
-            before = signature_fn(st.session_state["trip_state"])
-            with st.spinner("Applying..."):
-                st.session_state["trip_state"] = refine_fn(st.session_state["trip_state"])
-            after = signature_fn(st.session_state["trip_state"])
-            if after == before:
-                reply = _no_change_reply(category)
-            else:
-                reply = f"Done — {describe_fn(st.session_state['trip_state'])}"
+        # Charged before `classify_followup`, which is itself an LLM call --
+        # an unguarded classifier would still be a free, unbounded endpoint
+        # even if every refinement it routes to were capped.
+        if not _try_quota("session_refinements", action="refinement"):
+            reply = st.session_state.get(
+                "rate_limit_message",
+                "You've reached this session's refinement limit. Reload the "
+                "page to start a new session.",
+            )
         else:
-            reply = UNCLEAR_REPLY
+            category = classify_followup(followup)
+            handler = REFINE_HANDLERS.get(category)
+            if handler:
+                refine_fn, describe_fn, signature_fn = handler
+                before = signature_fn(st.session_state["trip_state"])
+                with st.spinner("Applying..."):
+                    st.session_state["trip_state"] = refine_fn(st.session_state["trip_state"])
+                after = signature_fn(st.session_state["trip_state"])
+                if after == before:
+                    reply = _no_change_reply(category)
+                else:
+                    reply = f"Done — {describe_fn(st.session_state['trip_state'])}"
+            else:
+                reply = UNCLEAR_REPLY
 
         st.session_state["chat_history"].append({"role": "assistant", "content": reply})
         st.rerun()
