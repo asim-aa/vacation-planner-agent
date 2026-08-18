@@ -44,6 +44,7 @@ A few things worth calling out from building this against live, uncontrolled dat
 - **Re-prioritize, don't re-search.** The chat refinement feature deliberately re-ranks results already fetched this run instead of hitting Google again — cheaper, faster, and avoids a live re-scrape silently returning a different result set than what's on screen.
 - **Don't trust the LLM's prose with facts either.** A flight recommendation once said "reaching Vancouver from San Jose" for a trip whose real destination was Guangzhou — nothing in the data mentioned Vancouver, it was invented. `agents/narrative_guard.py` checks every LLM-written recommendation against the real place names actually involved (looked up offline via `airportsdata`, not assumed) and silently swaps in a plain templated sentence if it finds one that doesn't belong.
 - **A short-TTL cache** (`tools/cache.py`) sits in front of every live search (flights, hotels, places+weather) so replanning or refining the same trip doesn't re-scrape from scratch — verified live: a repeated identical flight search dropped from 1.15s to 0.00s.
+- **The public deployment has request caps.** An unauthenticated app where every click fans out into LLM calls plus live scrapes is an unbounded spend and availability risk, so `agents/rate_limit.py` enforces two independent layers: per-session quotas (what one visitor can do) and a process-wide sliding window (total throughput across everyone). Refusals are all-or-nothing — a request blocked by the global cap doesn't burn the visitor's session allowance. The limiter takes an injectable clock and imports nothing from Streamlit, so window behaviour is unit-tested deterministically rather than by sleeping.
 - **The Streamlit UI itself is tested**, not just the backend — `tests/test_app.py` uses Streamlit's official `AppTest` framework to click the actual refine buttons and submit chat input in a simulated runtime, including a regression test for the exact "chat falsely claimed it changed something when nothing was left to switch to" bug found while testing live.
 
 ## Setup
@@ -85,10 +86,16 @@ The app itself needs zero code changes to deploy -- the only local-machine depen
    ```
    Root-level secrets like these are automatically exposed as environment variables, so `agents/llm_client.py`'s existing `os.environ[...]` reads pick them up with no code changes.
 
+5. Optionally tune the request caps in the same secrets block. They default to 8 plans and 30 refinements per session, and 120 plans per hour across all visitors — see the `RATE_LIMIT_*` entries in `.env.example`. Lower them if your key has a tight budget:
+   ```toml
+   RATE_LIMIT_SESSION_PLANS = "5"
+   RATE_LIMIT_GLOBAL_PLANS = "60"
+   ```
+
 ## Tests
 
 ```bash
-pytest                                       # 102 tests, fully offline (network calls mocked/gated)
+pytest                                       # 146 tests, fully offline (network calls mocked/gated)
 RUN_LIVE_FLIGHT_TESTS=1 pytest tests/test_flight_tool.py -v    # opt-in live network tests, per tool
 RUN_LIVE_HOTEL_TESTS=1 pytest tests/test_hotel_tool.py -v
 RUN_LIVE_PLACES_TESTS=1 pytest tests/test_spots_weather_tool.py -v
