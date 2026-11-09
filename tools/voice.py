@@ -50,11 +50,11 @@ def get_api_key() -> str | None:
 
 
 def get_voice_id() -> str:
-    return os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
+    return os.environ.get("ELEVENLABS_VOICE_ID", "").strip() or DEFAULT_VOICE_ID
 
 
 def get_model_id() -> str:
-    return os.environ.get("ELEVENLABS_MODEL_ID", DEFAULT_MODEL_ID)
+    return os.environ.get("ELEVENLABS_MODEL_ID", "").strip() or DEFAULT_MODEL_ID
 
 
 def synthesize(text: str, voice_id: str | None = None, model_id: str | None = None) -> bytes:
@@ -90,9 +90,27 @@ def _friendly_error(resp: requests.Response) -> str:
         return "The voice service is rate-limiting requests. Try again shortly."
     if status == 402:
         return "The voice service quota is used up for this period."
-    if status == 422:
-        return "The voice service couldn't process that text."
-    return f"The voice service returned an error (HTTP {status})."
+    detail = _api_detail(resp)
+    if status in (400, 422):
+        return "The voice service rejected the request" + (f": {detail}" if detail else f" (HTTP {status}).")
+    return f"The voice service returned an error (HTTP {status})" + (f": {detail}" if detail else ".")
+
+
+def _api_detail(resp: requests.Response) -> str:
+    """The API's own error message, trimmed. It never contains our key
+    (we only ever send it in a request header), so it is safe to show."""
+    try:
+        detail = resp.json().get("detail")
+    except (ValueError, AttributeError):
+        # Not ElevenLabs' JSON error shape (e.g. a gateway/proxy answered):
+        # show a short snippet of the raw body so we can tell who replied.
+        body = getattr(resp, "text", "")
+        return " ".join(body.split())[:120] if isinstance(body, str) else ""
+    if isinstance(detail, dict):
+        detail = detail.get("message") or detail.get("status")
+    elif isinstance(detail, list) and detail and isinstance(detail[0], dict):
+        detail = detail[0].get("msg")
+    return str(detail)[:200] if detail else ""
 
 
 def timed_synthesize(text: str, **kwargs) -> tuple[bytes, float]:
@@ -128,12 +146,21 @@ AUDIO_CACHE_TTL_SECONDS = 60 * 60
 api_call_count = 0
 
 
+def _int_env(name: str, default: int) -> int:
+    """Int from env; blank or invalid values fall back to the default
+    instead of crashing the app (e.g. `VOICE_MAX_CHARS = ""` in secrets)."""
+    try:
+        return int(os.environ.get(name, "").strip())
+    except ValueError:
+        return default
+
+
 def get_max_chars() -> int:
-    return int(os.environ.get("VOICE_MAX_CHARS", DEFAULT_MAX_CHARS))
+    return _int_env("VOICE_MAX_CHARS", DEFAULT_MAX_CHARS)
 
 
 def get_session_limit() -> int:
-    return int(os.environ.get("VOICE_MAX_PER_SESSION", DEFAULT_SESSION_LIMIT))
+    return _int_env("VOICE_MAX_PER_SESSION", DEFAULT_SESSION_LIMIT)
 
 
 # --- Global monthly character cap ----------------------------------------
@@ -150,7 +177,7 @@ _usage_lock = threading.Lock()
 
 
 def get_global_cap() -> int:
-    return int(os.environ.get("VOICE_GLOBAL_CHAR_CAP", DEFAULT_GLOBAL_CAP))
+    return _int_env("VOICE_GLOBAL_CHAR_CAP", DEFAULT_GLOBAL_CAP)
 
 
 def _usage_path() -> str:

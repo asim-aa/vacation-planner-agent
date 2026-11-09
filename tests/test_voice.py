@@ -50,7 +50,7 @@ def test_empty_text_raises_without_calling_api():
     post.assert_not_called()
 
 
-@pytest.mark.parametrize("status,fragment", [(401, "key"), (429, "rate"), (402, "quota"), (500, "500")])
+@pytest.mark.parametrize("status,fragment", [(401, "key"), (429, "rate"), (402, "quota"), (500, "500"), (400, "400")])
 def test_api_errors_become_friendly_voice_errors(status, fragment):
     with patch("tools.voice.requests.post", return_value=_resp(status=status)):
         with pytest.raises(voice.VoiceError, match=fragment):
@@ -185,3 +185,49 @@ def test_corrupt_usage_file_is_treated_as_zero(tmp_path, monkeypatch):
     bad.write_text("not json{")
     monkeypatch.setenv("VOICE_USAGE_FILE", str(bad))
     assert voice.global_chars_used() == 0
+
+
+# --- Blank settings and API error details -------------------------------
+
+def test_blank_voice_and_model_env_fall_back_to_defaults(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "  ")
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "")
+    assert voice.get_voice_id() == voice.DEFAULT_VOICE_ID
+    assert voice.get_model_id() == voice.DEFAULT_MODEL_ID
+
+
+def test_blank_or_invalid_numeric_env_fall_back_to_defaults(monkeypatch):
+    monkeypatch.setenv("VOICE_MAX_CHARS", "")
+    monkeypatch.setenv("VOICE_MAX_PER_SESSION", "three")
+    monkeypatch.setenv("VOICE_GLOBAL_CHAR_CAP", " ")
+    assert (voice.get_max_chars(), voice.get_session_limit(), voice.get_global_cap()) == (800, 3, 8000)
+
+
+def test_blank_voice_id_env_does_not_break_the_request_url(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "")
+    with patch("tools.voice.requests.post", return_value=_resp()) as post:
+        voice.synthesize_cached("Hello.")
+    assert post.call_args.args[0].endswith(f"/text-to-speech/{voice.DEFAULT_VOICE_ID}")
+
+
+def test_400_error_includes_the_api_message():
+    body = {"detail": {"status": "voice_not_found", "message": "A voice with that ID was not found."}}
+    with patch("tools.voice.requests.post", return_value=_resp(status=400, json_data=body)):
+        with pytest.raises(voice.VoiceError, match="not found"):
+            voice.synthesize("Hello")
+
+
+def test_422_error_includes_the_validation_message():
+    body = {"detail": [{"msg": "Field required"}]}
+    with patch("tools.voice.requests.post", return_value=_resp(status=422, json_data=body)):
+        with pytest.raises(voice.VoiceError, match="Field required"):
+            voice.synthesize("Hello")
+
+
+def test_non_json_error_body_snippet_is_shown():
+    resp = _resp(status=400)
+    resp.json.side_effect = ValueError("not json")
+    resp.text = "<html> Bad   gateway\n page </html>"
+    with patch("tools.voice.requests.post", return_value=resp):
+        with pytest.raises(voice.VoiceError, match="Bad gateway"):
+            voice.synthesize("Hello")
