@@ -222,3 +222,12 @@ def test_422_error_includes_the_validation_message():
     with patch("tools.voice.requests.post", return_value=_resp(status=422, json_data=body)):
         with pytest.raises(voice.VoiceError, match="Field required"):
             voice.synthesize("Hello")
+
+
+def test_non_json_error_body_snippet_is_shown():
+    resp = _resp(status=400)
+    resp.json.side_effect = ValueError("not json")
+    resp.text = "<html> Bad   gateway\n page </html>"
+    with patch("tools.voice.requests.post", return_value=resp):
+        with pytest.raises(voice.VoiceError, match="Bad gateway"):
+            voice.synthesize("Hello")

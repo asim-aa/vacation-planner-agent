@@ -102,7 +102,10 @@ def _api_detail(resp: requests.Response) -> str:
     try:
         detail = resp.json().get("detail")
     except (ValueError, AttributeError):
-        return ""
+        # Not ElevenLabs' JSON error shape (e.g. a gateway/proxy answered):
+        # show a short snippet of the raw body so we can tell who replied.
+        body = getattr(resp, "text", "")
+        return " ".join(body.split())[:120] if isinstance(body, str) else ""
     if isinstance(detail, dict):
         detail = detail.get("message") or detail.get("status")
     elif isinstance(detail, list) and detail and isinstance(detail[0], dict):
