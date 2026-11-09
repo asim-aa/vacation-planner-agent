@@ -228,3 +228,72 @@ def test_chat_unclear_request_does_not_change_state():
     reply = at.session_state["chat_history"][1]["content"]
     assert "I can currently help with" in reply
     assert at.session_state["trip_state"]["flight_results"][0]["Airline"] == original_flight
+
+
+# --- Voice summary (ElevenLabs) -------------------------------------------
+
+def _voice_app(state, monkeypatch, key="test-key"):
+    from tools import voice
+    if key:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+    else:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("VOICE_MAX_PER_SESSION", raising=False)
+    voice._synthesize_cached.cache_clear()
+    voice.api_call_count = 0
+    return _run_with(state)
+
+
+def _voice_button(at):
+    return [b for b in at.button if "Generate audio summary" in b.label]
+
+
+def test_voice_feature_is_disabled_without_api_key(monkeypatch):
+    at = _voice_app(_base_state(), monkeypatch, key=None)
+    assert not at.exception
+    assert not _voice_button(at)
+    assert any("turned off" in c.value for c in at.caption)
+
+
+def test_voice_does_not_generate_audio_until_clicked(monkeypatch):
+    with patch("tools.voice.requests.post") as post:
+        at = _voice_app(_base_state(), monkeypatch)
+    assert len(_voice_button(at)) == 1
+    post.assert_not_called()
+
+
+def test_voice_click_generates_and_counts_one_use(monkeypatch):
+    from unittest.mock import MagicMock
+    ok = MagicMock(status_code=200, content=b"MP3DATA")
+    at = _voice_app(_base_state(), monkeypatch)
+    with patch("tools.voice.requests.post", return_value=ok) as post, \
+         patch("tools.voice.fetch_quota", return_value=None), \
+         patch("agents.voice_summary.get_llm", return_value=FakeLLM("Enjoy Paris.")):
+        _voice_button(at)[0].click().run()
+    assert not at.exception
+    assert post.call_count == 1
+    assert at.session_state["voice_generations"] == 1
+    assert at.session_state["voice_result"]["audio"] == b"MP3DATA"
+    assert not _voice_button(at)  # result is showing instead of the button
+
+
+def test_voice_api_error_shows_friendly_message_and_does_not_crash(monkeypatch):
+    from unittest.mock import MagicMock
+    at = _voice_app(_base_state(), monkeypatch)
+    with patch("tools.voice.requests.post", return_value=MagicMock(status_code=429)), \
+         patch("agents.voice_summary.get_llm", return_value=FakeLLM("Enjoy Paris.")):
+        _voice_button(at)[0].click().run()
+    assert not at.exception
+    assert any("rate-limiting" in e.value for e in at.error)
+    assert "voice_generations" not in at.session_state  # failed attempts are not counted
+
+
+def test_voice_button_disabled_at_session_limit(monkeypatch):
+    from tools import voice
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    voice._synthesize_cached.cache_clear()
+    at = AppTest.from_file(APP_PATH)
+    at.session_state["trip_state"] = _base_state()
+    at.session_state["voice_generations"] = 3
+    at.run()
+    assert _voice_button(at)[0].disabled is True

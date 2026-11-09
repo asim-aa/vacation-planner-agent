@@ -2,7 +2,7 @@
 
 A multi-agent vacation planner built with [LangGraph](https://github.com/langchain-ai/langgraph). Give it one sentence — destination, budget, duration, and travel month — and independent Flight, Hotel, and Spots & Weather agents research it in parallel, then a budget step and a final compiler assemble one itinerary with an itemized cost breakdown.
 
-Every data source is live and free. **No API keys required anywhere in the system.**
+Every data source is live and free. **No API keys are required** to plan trips; an ElevenLabs key is needed only for the optional spoken summary (see [Voice summary](#voice-summary-optional)).
 
 ![Tests](https://github.com/asim-aa/vacation-planner-agent/actions/workflows/tests.yml/badge.svg)
 
@@ -69,6 +69,28 @@ Or from the command line, for one itinerary at a time:
 python demo_orchestrator.py "Plan me a 6 day trip to Tokyo in October, budget $3000, flying from Chicago"
 ```
 
+## Voice summary (optional)
+
+Under a finished itinerary, **Listen to your trip summary** reads a short (~400-700 character) spoken summary using [ElevenLabs](https://elevenlabs.io) text-to-speech. It is opt-in and per-click: audio is only generated when the button is pressed.
+
+How it works:
+- `agents/voice_summary.py` asks the existing LLM to write an ear-friendly summary from a small block of facts about the trip (no markdown, no airport codes). The text goes through the same `narrative_guard` as the other agents; if the LLM fails or names a city that isn't part of the trip, it falls back to a plain templated summary.
+- `tools/voice.py` sends it to `POST /v1/text-to-speech/{voice_id}` (plain `requests`, default model `eleven_flash_v2_5`, voice "George") and `app.py` plays the result with `st.audio`.
+- Audio is cached (reusing `tools/cache.py`'s TTL cache) on `(summary text, voice id, model id)`, so an identical summary never costs credits twice. The UI shows the characters used per generation, and account usage if the key has the `user_read` permission.
+- Because the deployed app is public, each browser session is limited to 3 generated summaries (cache hits don't count).
+- If no key is configured, or the API fails (bad key, rate limit, quota, network), the app shows a short message and keeps working.
+
+Setup -- add these names (never commit values). Locally, in `.streamlit/secrets.toml` (gitignored; see `.streamlit/secrets.toml.example`) or as environment variables; on Streamlit Cloud, in the app's secrets:
+
+```toml
+ELEVENLABS_API_KEY = "..."      # required to enable the feature; needs "Text to Speech" access
+# Optional:
+# ELEVENLABS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+# ELEVENLABS_MODEL_ID = "eleven_flash_v2_5"
+# VOICE_MAX_PER_SESSION = "3"
+# VOICE_MAX_CHARS = "800"
+```
+
 ## Deploy it
 
 The app itself needs zero code changes to deploy -- the only local-machine dependency is the LLM endpoint (Option A above points at `localhost`). Swap it for a hosted one first:
@@ -88,7 +110,7 @@ The app itself needs zero code changes to deploy -- the only local-machine depen
 ## Tests
 
 ```bash
-pytest                                       # 102 tests, fully offline (network calls mocked/gated)
+pytest                                       # 131 tests, fully offline (network calls mocked/gated)
 RUN_LIVE_FLIGHT_TESTS=1 pytest tests/test_flight_tool.py -v    # opt-in live network tests, per tool
 RUN_LIVE_HOTEL_TESTS=1 pytest tests/test_hotel_tool.py -v
 RUN_LIVE_PLACES_TESTS=1 pytest tests/test_spots_weather_tool.py -v
