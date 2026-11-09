@@ -11,8 +11,11 @@ Streamlit layer copies it in from st.secrets). It is never logged or put
 in an exception message.
 """
 
+import json
 import os
 import re
+import tempfile
+import threading
 import time
 
 import requests
@@ -34,6 +37,10 @@ class VoiceError(Exception):
 
 
 class MissingKeyError(VoiceError):
+    pass
+
+
+class CapReachedError(VoiceError):
     pass
 
 
@@ -129,11 +136,63 @@ def get_session_limit() -> int:
     return int(os.environ.get("VOICE_MAX_PER_SESSION", DEFAULT_SESSION_LIMIT))
 
 
+# --- Global monthly character cap ----------------------------------------
+# The session limit resets on a page refresh, so on its own it can't stop a
+# few visitors from using up the whole free tier. This caps total characters
+# sent to the API per calendar month (UTC) across ALL sessions of this app
+# process, persisted to a small JSON file. Limitation: on hosts with an
+# ephemeral filesystem (e.g. Streamlit Community Cloud) the file is lost when
+# the container restarts, which resets the counter -- a safety net, not exact
+# accounting. Only real API calls count; cache hits are free.
+
+DEFAULT_GLOBAL_CAP = 8000
+_usage_lock = threading.Lock()
+
+
+def get_global_cap() -> int:
+    return int(os.environ.get("VOICE_GLOBAL_CHAR_CAP", DEFAULT_GLOBAL_CAP))
+
+
+def _usage_path() -> str:
+    return os.environ.get("VOICE_USAGE_FILE") or os.path.join(tempfile.gettempdir(), "vacation_planner_voice_usage.json")
+
+
+def _current_month() -> str:
+    return time.strftime("%Y-%m", time.gmtime())
+
+
+def global_chars_used() -> int:
+    """Characters sent this calendar month; 0 if unknown/corrupt/new month."""
+    try:
+        with open(_usage_path()) as f:
+            data = json.load(f)
+        return int(data["chars"]) if data.get("month") == _current_month() else 0
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return 0
+
+
+def _record_usage(chars: int) -> None:
+    path = _usage_path()
+    payload = {"month": _current_month(), "chars": global_chars_used() + chars}
+    try:
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # can't persist -> cap is best-effort, never break the feature
+
+
 @ttl_cache(ttl_seconds=AUDIO_CACHE_TTL_SECONDS)
 def _synthesize_cached(text: str, voice_id: str, model_id: str) -> bytes:
     global api_call_count
-    api_call_count += 1
-    return synthesize(text, voice_id=voice_id, model_id=model_id)
+    with _usage_lock:
+        if global_chars_used() + len(text) > get_global_cap():
+            raise CapReachedError("This app's monthly voice budget is used up. Please check back next month.")
+        api_call_count += 1
+        audio = synthesize(text, voice_id=voice_id, model_id=model_id)
+        _record_usage(len(text))
+    return audio
 
 
 def synthesize_cached(text: str) -> bytes:
