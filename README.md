@@ -75,6 +75,7 @@ Under a finished itinerary, **Listen to your trip summary** reads a short (~400-
 
 How it works:
 - `agents/voice_summary.py` asks the existing LLM to write an ear-friendly summary from a small block of facts about the trip (no markdown, no airport codes). The text goes through the same `narrative_guard` as the other agents; if the LLM fails or names a city that isn't part of the trip, it falls back to a plain templated summary.
+- Under the player, a caption says who wrote the spoken text: the AI model, or a template (with the reason, e.g. the error type, if the model was unavailable). Set `VOICE_SUMMARY_USE_LLM = "false"` to skip the LLM entirely and always use the template -- useful when no LLM endpoint is configured, because then nothing is called and nothing can fail or time out.
 - `tools/voice.py` sends it to `POST /v1/text-to-speech/{voice_id}` (plain `requests`, default model `eleven_flash_v2_5`, voice "George") and `app.py` plays the result with `st.audio`.
 - Audio is cached (reusing `tools/cache.py`'s TTL cache) on `(summary text, voice id, model id)`, so an identical summary never costs credits twice. The UI shows the characters used per generation, and account usage if the key has the `user_read` permission.
 - Because the deployed app is public, each browser session is limited to 3 generated summaries, and a global monthly cap (default 8,000 characters, `VOICE_GLOBAL_CHAR_CAP`) stops all voice generation for the rest of the month once reached. Cache hits don't count toward either. The global counter is a small JSON file, so on hosts with an ephemeral filesystem (like Streamlit Community Cloud) a container restart resets it -- a safety net, not exact accounting.
@@ -90,6 +91,7 @@ ELEVENLABS_API_KEY = "..."      # required to enable the feature; needs "Text to
 # VOICE_MAX_PER_SESSION = "3"
 # VOICE_MAX_CHARS = "800"
 # VOICE_GLOBAL_CHAR_CAP = "8000"
+# VOICE_SUMMARY_USE_LLM = "false"   # always use the templated summary (no LLM call)
 ```
 
 ## Deploy it
@@ -111,7 +113,7 @@ The app itself needs zero code changes to deploy -- the only local-machine depen
 ## Tests
 
 ```bash
-pytest                                       # 139 tests, fully offline (network calls mocked/gated)
+pytest                                       # 162 tests, fully offline (network calls mocked/gated)
 RUN_LIVE_FLIGHT_TESTS=1 pytest tests/test_flight_tool.py -v    # opt-in live network tests, per tool
 RUN_LIVE_HOTEL_TESTS=1 pytest tests/test_hotel_tool.py -v
 RUN_LIVE_PLACES_TESTS=1 pytest tests/test_spots_weather_tool.py -v
