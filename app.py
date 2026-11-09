@@ -10,6 +10,10 @@ Usage:
     streamlit run app.py
 """
 
+import hashlib
+import os
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -19,6 +23,8 @@ from agents.followup_router import classify_followup
 from agents.graph import plan_trip
 from agents.hotel_agent import build_hotel_output
 from agents.spots_weather_agent import build_spot_output, rank_spots
+from agents.voice_summary import build_voice_summary
+from tools import voice
 from tools.flight_tool import select_flight
 
 st.set_page_config(page_title="Vacation Planner", page_icon="🧳", layout="wide")
@@ -383,6 +389,86 @@ def render_itinerary(state: dict) -> None:
         file_name="itinerary.md",
         mime="text/markdown",
     )
+    render_voice(state)
+
+
+_VOICE_SETTINGS = (
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_VOICE_ID",
+    "ELEVENLABS_MODEL_ID",
+    "VOICE_MAX_PER_SESSION",
+    "VOICE_MAX_CHARS",
+)
+
+
+def _load_voice_settings() -> None:
+    """Copy voice settings from st.secrets into the environment (where
+    tools/voice.py reads them). Env vars already set win. A missing
+    secrets file is normal (voice is just disabled), never an error."""
+    try:
+        for name in _VOICE_SETTINGS:
+            if name not in os.environ and name in st.secrets:
+                os.environ[name] = str(st.secrets[name])
+    except Exception:
+        pass
+
+
+def render_voice(state: dict) -> None:
+    """Opt-in spoken summary. Audio is generated ONLY on button click and
+    capped per session, since the deployed app is public and the key is
+    mine."""
+    _load_voice_settings()
+    st.divider()
+    st.markdown("#### 🔊 Listen to your trip summary")
+    if not voice.get_api_key():
+        st.caption("Voice summary is turned off (no ElevenLabs API key configured).")
+        return
+
+    limit = voice.get_session_limit()
+    used = st.session_state.get("voice_generations", 0)
+    itinerary_key = hashlib.sha256(state.get("itinerary_markdown", "").encode()).hexdigest()
+    result = st.session_state.get("voice_result")
+    if result and result["itinerary_key"] != itinerary_key:
+        result = None  # itinerary changed (new trip or a refinement) -> stale audio
+
+    if result is None:
+        st.caption(f"A short spoken summary (~{voice.get_max_chars()} characters max). {used} of {limit} used this session.")
+        if st.button("▶️ Generate audio summary", disabled=used >= limit):
+            with st.spinner("Writing and recording your summary..."):
+                summary = build_voice_summary(state, max_chars=voice.get_max_chars())
+                calls_before = voice.api_call_count
+                try:
+                    started = time.perf_counter()
+                    audio = voice.synthesize_cached(summary)
+                    elapsed = time.perf_counter() - started
+                except voice.VoiceError as e:
+                    st.error(f"🔇 {e}")
+                    return
+            was_cached = voice.api_call_count == calls_before
+            if not was_cached:
+                st.session_state["voice_generations"] = used + 1  # only real API calls count
+            st.session_state["voice_result"] = {
+                "itinerary_key": itinerary_key,
+                "summary": summary,
+                "audio": audio,
+                "chars": len(summary),
+                "seconds": elapsed,
+                "cached": was_cached,
+                "quota": None if was_cached else voice.fetch_quota(),
+            }
+            st.rerun()
+        if used >= limit:
+            st.info("You've reached this session's audio limit.")
+        return
+
+    st.audio(result["audio"], format="audio/mp3")
+    note = f"{result['chars']} characters" + (" (cached, no credits used)" if result["cached"] else f" in {result['seconds']:.1f}s")
+    quota = result.get("quota")
+    if quota:
+        note += f" · account usage {quota['used']:,} / {quota['limit']:,} characters this period"
+    st.caption(note)
+    with st.expander("Read the summary"):
+        st.write(result["summary"])
 
 
 def _describe_hotel_pick(state: dict) -> str:
