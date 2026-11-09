@@ -45,3 +45,23 @@ Only things that actually happened. Nothing here is estimated.
 - Free-tier limit confirmed by the owner: 10,000 credits/month (dashboard); at ~0.5 credits/char for Flash that's ~20,000 characters, so the 8,000-character cap below leaves a wide margin. Per-session cap alone can't protect it (a page refresh resets it), so added `VOICE_GLOBAL_CHAR_CAP` (default 8,000), counted only on real API calls (cache hits and failed calls are free), persisted to a JSON file and reset each UTC month.
 - Limitation: on an ephemeral filesystem (Streamlit Community Cloud) a container restart resets the counter, so this is a safety net, not exact accounting. It also only counts this app's own calls, not other uses of the same key.
 - Tests: 139 passed, 11 skipped (8 new). `tests/test_app.py::test_app_loads_without_error` failed once on the first full run (AppTest RuntimeError, likely a cold-start timeout) and passed on isolated rerun and two more full runs; cause not root-caused.
+
+## Deployed app (Streamlit Community Cloud) -- owner-reported
+Results below were reported by the owner after running the public app; I could not reach it from my sandbox, so none of it is measured by me.
+
+**What broke first**
+- With the key added to Streamlit secrets, the button showed only "The voice service returned an error (HTTP 400)". The ElevenLabs Request Log showed no text-to-speech request for it (only dashboard page loads), so ElevenLabs had not logged it.
+- My first theory (blank optional settings such as an empty voice or model id overriding the defaults) was **wrong for this case** -- the owner had no optional settings. The fix still went in as hardening (blank/invalid values now fall back to defaults; previously a blank numeric setting would have crashed).
+- Real cause: the owner had pasted the API key **ID** instead of the secret key (`sk_...`). After PR #4 made the app show ElevenLabs' own message, it read: "API key ID used as API key - only valid API keys can be used. API keys start with 'sk_' ...". Rotating the key and pasting the `sk_` value fixed it.
+- Lesson: the first error message was too vague to diagnose a configuration mistake; surfacing the provider's own error text (and a snippet for non-JSON replies) turned a guess into a one-step fix.
+
+**After the fix (owner's words)**
+- Audio plays and the entire summary played.
+- Sounded "a bit robotic"; covered everything well; accurate (no invented details noticed).
+- Timing: reported as "instant" -- not specified whether that was the first generation or a repeat click, and no seconds were measured.
+
+**Not reported / not checked**
+- Credits used by the deployed generation, and the repeat-click cache check on the deployed app.
+- Whether the spoken text came from the LLM or the templated fallback.
+- Failure tests with real conditions (wrong key beyond the key-ID case, wifi off, empty/very long itinerary), session-limit behavior on the live app, and a browser dev-tools check that the key never reaches the browser.
+- Voice quality beyond "a bit robotic"; I have not listened to any audio. A different voice or settings might sound less robotic; not tried.
