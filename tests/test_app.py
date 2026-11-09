@@ -274,6 +274,8 @@ def test_voice_click_generates_and_counts_one_use(monkeypatch):
     assert post.call_count == 1
     assert at.session_state["voice_generations"] == 1
     assert at.session_state["voice_result"]["audio"] == b"MP3DATA"
+    assert at.session_state["voice_result"]["source"] == "ai"
+    assert any("Written by the AI model" in c.value for c in at.caption)
     assert not _voice_button(at)  # result is showing instead of the button
 
 

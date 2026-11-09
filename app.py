@@ -23,7 +23,7 @@ from agents.followup_router import classify_followup
 from agents.graph import plan_trip
 from agents.hotel_agent import build_hotel_output
 from agents.spots_weather_agent import build_spot_output, rank_spots
-from agents.voice_summary import build_voice_summary
+from agents.voice_summary import SOURCE_LABELS, build_voice_summary_with_source
 from tools import voice
 from tools.flight_tool import select_flight
 
@@ -436,7 +436,7 @@ def render_voice(state: dict) -> None:
         st.caption(f"A short spoken summary (~{voice.get_max_chars()} characters max). {used} of {limit} used this session.")
         if st.button("▶️ Generate audio summary", disabled=used >= limit):
             with st.spinner("Writing and recording your summary..."):
-                summary = build_voice_summary(state, max_chars=voice.get_max_chars())
+                summary, summary_source = build_voice_summary_with_source(state, max_chars=voice.get_max_chars())
                 calls_before = voice.api_call_count
                 try:
                     started = time.perf_counter()
@@ -451,6 +451,7 @@ def render_voice(state: dict) -> None:
             st.session_state["voice_result"] = {
                 "itinerary_key": itinerary_key,
                 "summary": summary,
+                "source": summary_source,
                 "audio": audio,
                 "chars": len(summary),
                 "seconds": elapsed,
@@ -470,6 +471,7 @@ def render_voice(state: dict) -> None:
     st.caption(note)
     with st.expander("Read the summary"):
         st.write(result["summary"])
+        st.caption(SOURCE_LABELS.get(result.get("source"), ""))
 
 
 def _describe_hotel_pick(state: dict) -> str:

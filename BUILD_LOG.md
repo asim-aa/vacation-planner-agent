@@ -66,3 +66,13 @@ Results below were reported by the owner after running the public app; I could n
 - Whether the spoken text came from the LLM or the templated fallback.
 - Failure tests with real conditions (wrong key beyond the key-ID case, wifi off, empty/very long itinerary), session-limit behavior on the live app, and a browser dev-tools check that the key never reaches the browser.
 - Voice quality beyond "a bit robotic"; I have not listened to any audio. A different voice or settings might sound less robotic; not tried.
+
+## Follow-up: what the first real LLM summary got wrong (owner's screenshot)
+The owner's deployed run (430 characters, audio 0:26, caption "430 characters in 0.7s") settled which writer produced the text: the **LLM**, not the template (first-person phrasing, "From New York, I flew to Paris..."). The spoken text had three real problems:
+1. **Wrong perspective/tense.** It said "I flew", "I planned", "I visited" for a trip that hasn't happened. My prompt never said the trip was upcoming or to address the traveler -- a prompt bug.
+2. **An embellishment not in the facts.** "The trip was a memorable blend of history, art, and local culture." Nothing in the facts supports it. The place-name guard did not catch it because it only checks for invented *cities* -- the limitation I had logged earlier, now seen in a real output.
+3. **Numbers that may not reconcile.** It said "about three hundred fifty dollars each way, totaling about seven hundred thirty dollars" (2 x 350 is 700). I could not see the trip's data, so I don't know whether the model misstated a figure or rounding caused it; I only know the spoken sentence is internally inconsistent. The owner had called the summary "accurate" before seeing this closely.
+Also: the "0.7s" caption times only the ElevenLabs request, not the LLM call, so it is not click-to-audio latency (still unmeasured).
+
+**Changes made:** the prompt now says the trip is upcoming, requires second person and future tense, forbids opinions/descriptions/closing remarks, and tells the model not to do arithmetic; the round-trip flight total is now computed in code and passed as a fact (`flight_total_round_trip`); the UI now shows who wrote the text ("Written by the AI model" or a template caption saying why it fell back), because the fallback used to be silent. 6 new tests (plus an added assertion in an existing UI test).
+**Not verified:** none of these prompt changes has been run against the real LLM, so I don't know yet that the model obeys them; a prompt can still be ignored. There is still no check on numbers or on non-city invented claims in the spoken text.

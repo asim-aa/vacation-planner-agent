@@ -33,6 +33,7 @@ def _facts(state: TripState) -> dict:
         "total": round(state.get("total_cost_estimate", 0.0)),
         "airline": flight["Airline"] if flight else None,
         "flight_price_each_way": round(flight["Price_USD"]) if flight else None,
+        "flight_total_round_trip": round(state.get("flight_cost_estimate") or flight["Price_USD"] * 2) if flight else None,
         "flight_stops": flight["Stops"] if flight else None,
         "hotel": hotel["HotelName"] if hotel else None,
         "hotel_price_per_night": round(hotel["EstimatedPriceUSD"]) if hotel else None,
@@ -68,24 +69,53 @@ def template_summary(facts: dict) -> str:
     return " ".join(parts)
 
 
-def build_voice_summary(state: TripState, llm=None, max_chars: int = DEFAULT_MAX_CHARS) -> str:
-    """Return a spoken-style summary of at most `max_chars` characters.
-    `llm` is injectable for tests; defaults to the real client."""
-    facts = _facts(state)
-    prompt = (
-        "Write a spoken trip summary of about 400 to 600 characters, to be read aloud by a "
-        "text-to-speech voice. Rules: plain sentences only -- no markdown, bullets, tables, "
-        "emoji, or airport codes. Say dates, prices and numbers the way a person would say them "
-        "(for example 'about three hundred dollars'). Use ONLY the facts below; do not add any "
-        "place name, price, or detail that is not listed.\n\nFacts (JSON):\n"
+SOURCE_AI = "ai"
+SOURCE_TEMPLATE_UNAVAILABLE = "template_llm_unavailable"
+SOURCE_TEMPLATE_REJECTED = "template_guard_rejected"
+
+SOURCE_LABELS = {
+    SOURCE_AI: "Written by the AI model",
+    SOURCE_TEMPLATE_UNAVAILABLE: "Written from a template (the AI model was unavailable)",
+    SOURCE_TEMPLATE_REJECTED: "Written from a template (the AI draft named a place outside this trip)",
+}
+
+
+def _prompt(facts: dict) -> str:
+    return (
+        "Write a spoken summary of an UPCOMING trip, about 400 to 600 characters, to be read aloud "
+        "by a text-to-speech voice. Address the traveler directly in the second person and future "
+        "tense (for example \"You'll fly...\", \"You'll stay...\"). The trip has not happened yet: "
+        "never write in the first person or the past tense.\n"
+        "Rules: plain sentences only -- no markdown, bullets, tables, emoji, or airport codes. Say "
+        "numbers the way a person would (for example 'about three hundred dollars'). Use ONLY the "
+        "facts below: do not add any place name, price, or detail that is not listed, and do not add "
+        "opinions, descriptions, or closing remarks (such as how memorable or enjoyable the trip "
+        "will be). Do not do arithmetic: use the numbers exactly as given, including "
+        "flight_total_round_trip for the whole flight cost.\n\nFacts (JSON):\n"
         f"{facts}"
     )
+
+
+def build_voice_summary_with_source(
+    state: TripState, llm=None, max_chars: int = DEFAULT_MAX_CHARS
+) -> tuple[str, str]:
+    """Return (summary text of at most `max_chars`, source) where source is
+    one of the SOURCE_* values, so the UI can say who actually wrote it
+    instead of silently falling back. `llm` is injectable for tests."""
+    facts = _facts(state)
+    source = SOURCE_AI
     try:
         llm = llm or get_llm()
-        text = clean_for_speech(llm.invoke(prompt).content, max_chars)
+        text = clean_for_speech(llm.invoke(_prompt(facts)).content, max_chars)
     except Exception:
         text = ""
 
-    if not text or mentions_unexpected_city(text, _allowed_names(facts)):
-        text = template_summary(facts)
-    return clean_for_speech(text, max_chars)
+    if not text:
+        text, source = template_summary(facts), SOURCE_TEMPLATE_UNAVAILABLE
+    elif mentions_unexpected_city(text, _allowed_names(facts)):
+        text, source = template_summary(facts), SOURCE_TEMPLATE_REJECTED
+    return clean_for_speech(text, max_chars), source
+
+
+def build_voice_summary(state: TripState, llm=None, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    return build_voice_summary_with_source(state, llm=llm, max_chars=max_chars)[0]
