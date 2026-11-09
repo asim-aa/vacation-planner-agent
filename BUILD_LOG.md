@@ -59,9 +59,10 @@ Results below were reported by the owner after running the public app; I could n
 - Audio plays and the entire summary played.
 - Sounded "a bit robotic"; covered everything well; accurate (no invented details noticed).
 - Timing: reported as "instant" -- not specified whether that was the first generation or a repeat click, and no seconds were measured.
+- Credits, from the dashboard (before 400 / after 615 of 10,000, Free plan): the deployed generation cost **215 credits**. At ~0.5 credits/char that is about 430 characters, a typical summary length -- an inference from the rate, since I did not see the summary's character count. The failed attempts (rejected at authentication) are not visible as credit use.
 
 **Not reported / not checked**
-- Credits used by the deployed generation, and the repeat-click cache check on the deployed app.
+- The repeat-click cache check on the deployed app (no second credit reading was taken).
 - Whether the spoken text came from the LLM or the templated fallback.
 - Failure tests with real conditions (wrong key beyond the key-ID case, wifi off, empty/very long itinerary), session-limit behavior on the live app, and a browser dev-tools check that the key never reaches the browser.
 - Voice quality beyond "a bit robotic"; I have not listened to any audio. A different voice or settings might sound less robotic; not tried.
