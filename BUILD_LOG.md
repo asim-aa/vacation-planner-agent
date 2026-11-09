@@ -24,8 +24,8 @@ Only things that actually happened. Nothing here is estimated.
 ## Measurements
 - Test suite: baseline **102 passed, 11 skipped**; now **131 passed, 11 skipped** (+29 new tests; all ElevenLabs calls mocked; CI needs no secret).
 - One real test call: 400 characters in, 91,132 bytes of MP3 out, **0.98 s** wall clock for one request (`eleven_flash_v2_5`, `mp3_22050_32`, George). That text was hand-written from the test fixture's trip, not LLM-generated.
-- Characters consumed against the quota during testing: **400** (the one real call).
-- Cache hit vs. miss timing against the real API: **not measured** (would cost a second real call). Cache behaviour is verified only by unit tests that count mocked HTTP calls.
+- Cache, measured in one process with the same 400-character text: miss **1018 ms** (a real API call), hit **0.02 ms** (no API call; the call counter stayed at 1). One sample each, not an average.
+- Characters consumed against the quota during testing: **800** (two real calls of 400 characters: the first test call and the cache-timing miss).
 - I did not listen to the audio (no audio output here), so voice quality and pronunciation are **unjudged**; the file is a valid MP3 by its `ID3` header only.
 
 ## Known limitations
