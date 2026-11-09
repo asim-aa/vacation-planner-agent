@@ -125,3 +125,63 @@ def test_fetch_quota_returns_none_when_key_lacks_permission():
 def test_fetch_quota_returns_none_on_network_error():
     with patch("tools.voice.requests.get", side_effect=requests.Timeout()):
         assert voice.fetch_quota() is None
+
+
+# --- Global monthly cap ---------------------------------------------------
+
+def test_global_cap_default_and_override(monkeypatch):
+    assert voice.get_global_cap() == 8000
+    monkeypatch.setenv("VOICE_GLOBAL_CHAR_CAP", "123")
+    assert voice.get_global_cap() == 123
+
+
+def test_real_calls_are_counted_toward_the_global_cap():
+    with patch("tools.voice.requests.post", return_value=_resp()):
+        voice.synthesize_cached("x" * 100)
+        voice.synthesize_cached("y" * 50)
+    assert voice.global_chars_used() == 150
+
+
+def test_cache_hits_do_not_count_toward_the_global_cap():
+    with patch("tools.voice.requests.post", return_value=_resp()):
+        voice.synthesize_cached("x" * 100)
+        voice.synthesize_cached("x" * 100)
+    assert voice.global_chars_used() == 100
+
+
+def test_cap_blocks_api_call_when_it_would_be_exceeded(monkeypatch):
+    monkeypatch.setenv("VOICE_GLOBAL_CHAR_CAP", "150")
+    with patch("tools.voice.requests.post", return_value=_resp()) as post:
+        voice.synthesize_cached("x" * 100)
+        with pytest.raises(voice.CapReachedError, match="monthly"):
+            voice.synthesize_cached("y" * 60)
+    assert post.call_count == 1
+    assert voice.global_chars_used() == 100
+
+
+def test_cached_audio_is_still_served_after_cap_is_reached(monkeypatch):
+    monkeypatch.setenv("VOICE_GLOBAL_CHAR_CAP", "100")
+    with patch("tools.voice.requests.post", return_value=_resp()):
+        voice.synthesize_cached("x" * 100)
+        assert voice.synthesize_cached("x" * 100) == b"MP3DATA"
+
+
+def test_failed_api_calls_do_not_use_up_the_cap():
+    with patch("tools.voice.requests.post", return_value=_resp(status=429)):
+        with pytest.raises(voice.VoiceError):
+            voice.synthesize_cached("x" * 100)
+    assert voice.global_chars_used() == 0
+
+
+def test_usage_resets_in_a_new_month(monkeypatch):
+    with patch("tools.voice.requests.post", return_value=_resp()):
+        voice.synthesize_cached("x" * 100)
+    monkeypatch.setattr(voice, "_current_month", lambda: "2099-01")
+    assert voice.global_chars_used() == 0
+
+
+def test_corrupt_usage_file_is_treated_as_zero(tmp_path, monkeypatch):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json{")
+    monkeypatch.setenv("VOICE_USAGE_FILE", str(bad))
+    assert voice.global_chars_used() == 0

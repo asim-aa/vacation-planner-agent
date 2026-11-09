@@ -39,3 +39,8 @@ Only things that actually happened. Nothing here is estimated.
 - Use the real LLM once configured and look at the real summaries for length and pronunciation of names and prices.
 - Measure real cache-hit vs. miss and compare output formats/models by ear.
 - Move the usage guard server-side (per IP or global daily cap) if the public app gets traffic.
+
+## Follow-up: global monthly cap
+- Free-tier limit confirmed by the owner: 10,000 characters/month. Per-session cap alone can't protect it (a page refresh resets it), so added `VOICE_GLOBAL_CHAR_CAP` (default 8,000), counted only on real API calls (cache hits and failed calls are free), persisted to a JSON file and reset each UTC month.
+- Limitation: on an ephemeral filesystem (Streamlit Community Cloud) a container restart resets the counter, so this is a safety net, not exact accounting. It also only counts this app's own calls, not other uses of the same key.
+- Tests: 139 passed, 11 skipped (8 new). `tests/test_app.py::test_app_loads_without_error` failed once on the first full run (AppTest RuntimeError, likely a cold-start timeout) and passed on isolated rerun and two more full runs; cause not root-caused.
