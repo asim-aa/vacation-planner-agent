@@ -42,6 +42,8 @@ def verify(state: dict) -> tuple[list[str], list[str]]:
                        ("spot_results", "activities")]:
         if not state.get(key):
             warnings.append(f"no {label} found -- tell the user, do not fill the gap")
+    if not any(state.get(k) for k in ("flight_results", "hotel_results", "spot_results")):
+        errors.append("every data source returned nothing (likely network/API outage) -- not a real plan")
     return errors, warnings
 
 

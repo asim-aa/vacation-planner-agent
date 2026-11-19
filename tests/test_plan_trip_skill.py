@@ -48,3 +48,8 @@ def test_missing_day_fails():
 def test_empty_results_warn_not_fail():
     errs, warns = v.verify(_state(flight_results=[]))
     assert errs == [] and warns
+
+
+def test_all_sources_empty_fails():
+    s = _state(flight_results=[], hotel_results=[], spot_results=[])
+    assert any("every data source" in e for e in v.verify(s)[0])
