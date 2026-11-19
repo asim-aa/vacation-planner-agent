@@ -78,3 +78,15 @@ def test_missing_hotel_shows_placeholder_not_crash():
     state = _base_state(hotel_results=[])
     result = compile_itinerary_node(state)
     assert "TBD" in result["itinerary_markdown"]
+
+
+def test_missing_categories_not_reported_as_within_budget():
+    state = _base_state(hotel_results=[], spot_results=[])
+    md = compile_itinerary_node(state)["itinerary_markdown"]
+    assert "Within budget" not in md
+    assert "Incomplete: no hotels, activities found" in md
+
+
+def test_over_budget_still_wins_when_categories_missing():
+    state = _base_state(budget_total=100.0, hotel_results=[])
+    assert "Over budget" in compile_itinerary_node(state)["itinerary_markdown"]

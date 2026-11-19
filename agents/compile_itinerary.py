@@ -35,11 +35,28 @@ def compile_itinerary_node(state: TripState) -> dict:
             day_lines.append(f"- **Day {day_number}:** Visit {spot}.")
         day_lines.append(f"- **Day {duration_days}:** Departure from {state['destination_city']}.")
 
-    budget_status = (
-        f"✅ Within budget (${budget_total:,.2f})"
-        if total <= budget_total
-        else f"⚠️ Over budget by ${over_by:,.2f}"
-    )
+    # A searched-and-found-nothing category costs $0 in the table, which would
+    # make the total look cheaper than a real trip. Only flag categories whose
+    # results key is present and empty (the pipeline always sets it).
+    missing = [
+        label
+        for key, label in (
+            ("flight_results", "flights"),
+            ("hotel_results", "hotels"),
+            ("spot_results", "activities"),
+        )
+        if key in state and not state[key]
+    ]
+
+    if total > budget_total:
+        budget_status = f"⚠️ Over budget by ${over_by:,.2f}"
+    elif missing:
+        budget_status = (
+            f"⚠️ Incomplete: no {', '.join(missing)} found, so the total above "
+            f"leaves those costs out (budget ${budget_total:,.2f})"
+        )
+    else:
+        budget_status = f"✅ Within budget (${budget_total:,.2f})"
 
     markdown = f"""# Vacation Itinerary: {state['destination_city']}, {state['destination_country']}
 
